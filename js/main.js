@@ -2,16 +2,20 @@
 
 // Funzione di inizializzazione principale
 function init() {
-    // IMPORTANTE: Prima inizializza i parametri, POI calcola le ore
+    console.log('🚀 Inizializzazione applicazione...');
     
-    // Carica l'ultimo piano utilizzato (che potrebbe contenere parametri salvati)
-    loadLastPlan();
-    
-    // Solo DOPO aver caricato eventuali dati salvati, calcola le ore
+    // Prima inizializza le ore dei corsi (default)
     initializeCourseHours();
+    console.log('✅ Ore inizializzate');
     
-    // IMPORTANTE: Prima calcola le date (che calcola anche le settimane individuali e le statistiche)
+    // POI tenta di caricare l'ultimo piano utilizzato
+    // (questo potrebbe sovrascrivere le ore calcolate sopra)
+    const wasLoaded = loadLastPlan();
+    console.log('📁 Piano caricato:', wasLoaded ? 'SI' : 'NO (usando default)');
+    
+    // IMPORTANTE: Calcola le date (che calcola anche le settimane individuali e le statistiche)
     recalculateDates();
+    console.log('📅 Date ricalcolate');
     
     // Aggiorna display del piano corrente
     updateCurrentPlanDisplay();
@@ -24,6 +28,8 @@ function init() {
     const startDateInput = document.getElementById('startDate');
     weeklyHoursInput.style.background = '#f0f0f0';
     startDateInput.style.background = '#f0f0f0';
+    
+    console.log('✅ Inizializzazione completata');
 }
 
 // Inizializza l'applicazione al caricamento della pagina

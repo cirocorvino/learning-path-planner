@@ -25,12 +25,16 @@ function loadLastPlan() {
     if (lastPlanId) {
         const savedPlans = getSavedPlans();
         if (savedPlans[lastPlanId]) {
+            console.log('📁 Caricando piano salvato:', lastPlanId);
             loadPlanFromData(savedPlans[lastPlanId]);
             currentPlanId = lastPlanId;
             currentPlanName = savedPlans[lastPlanId].metadata.name;
-            return;
+            updateCurrentPlanDisplay();
+            return true; // Piano caricato con successo
         }
     }
+    console.log('📋 Nessun piano salvato trovato, usando configurazione predefinita');
+    return false; // Nessun piano caricato
     
     // Se non c'è un piano salvato, NON chiamare recalculateDates qui
     // perché le ore non sono ancora state calcolate
@@ -39,6 +43,13 @@ function loadLastPlan() {
 
 // Carica dati del piano
 function loadPlanFromData(planData) {
+    console.log('📥 Caricando dati piano:', {
+        corsesCount: planData.courses ? planData.courses.length : 0,
+        totalHours: planData.courses ? planData.courses.reduce((sum, c) => sum + c.hours, 0) : 0,
+        weeklyHours: planData.weeklyHours,
+        startDate: planData.globalStartDate
+    });
+    
     courses = planData.courses || courses;
     weeklySchedules = planData.weeklySchedules || {};
     courseTopics = planData.courseTopics || {};
@@ -50,6 +61,8 @@ function loadPlanFromData(planData) {
     
     updateStats();
     renderGantt();
+    
+    console.log('✅ Dati piano caricati con successo');
 }
 
 // Ottieni dati del piano corrente
@@ -96,12 +109,20 @@ function savePlan() {
         planData.metadata.createdAt = new Date().toISOString();
     }
     
+    console.log('💾 Salvando piano:', {
+        id: planId,
+        name: name,
+        corsesCount: planData.courses ? planData.courses.length : 0,
+        totalHours: planData.courses ? planData.courses.reduce((sum, c) => sum + c.hours, 0) : 0
+    });
+    
     savePlanToStorage(planId, planData);
     currentPlanId = planId;
     currentPlanName = name;
     updateCurrentPlanDisplay();
     closeSaveModal();
     
+    console.log('✅ Piano salvato con successo!');
     alert('Piano di studio salvato con successo!');
 }
 
