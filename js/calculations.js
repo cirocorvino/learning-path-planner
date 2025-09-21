@@ -19,20 +19,20 @@ function calculateModuleEffectiveTime(module) {
 
 // Calcola le ore totali effettive per ogni corso
 function calculateCourseEffectiveHours(courseName) {
-    console.log("Calcolando ore per:", courseName);
+    Logger.calc("Calcolando ore per:", courseName);
     const course = curriculum[courseName];
     if (!course) {
-        console.warn(`ATTENZIONE: Corso "${courseName}" non trovato nel curriculum!`);
+        Logger.error(`ATTENZIONE: Corso "${courseName}" non trovato nel curriculum!`);
         return 0;
     }
     
     const total = course.modules.reduce((total, module) => {
         const effectiveTime = calculateModuleEffectiveTime(module);
-        console.log(`${module.name}: ${module.time} → ${effectiveTime}`);
+        Logger.calc(`${module.name}: ${module.time} → ${effectiveTime}`);
         return total + effectiveTime;
     }, 0);
     
-    console.log(`Totale ore calcolate per ${courseName}:`, total);
+    Logger.calc(`Totale ore calcolate per ${courseName}:`, total);
     return total;
 }
 
@@ -45,13 +45,13 @@ function recalculateAllEffectiveHours() {
 
 // Calcola le ore iniziali per tutti i corsi
 function initializeCourseHours() {
-    console.log("=== INIZIALIZZAZIONE ORE CORSI ===");
+    Logger.calc("=== INIZIALIZZAZIONE ORE CORSI ===");
     courses.forEach(course => {
         const oldHours = course.hours;
         course.hours = calculateCourseEffectiveHours(course.name);
-        console.log(`${course.name}: ${oldHours}h → ${course.hours}h`);
+        Logger.calc(`${course.name}: ${oldHours}h → ${course.hours}h`);
     });
-    console.log("=== FINE INIZIALIZZAZIONE ===");
+    Logger.calc("=== FINE INIZIALIZZAZIONE ===");
 }
 
 // Ricalcola tutte le date
@@ -88,11 +88,11 @@ function updateStats() {
     
     const endDate = courses.length > 0 ? new Date(courses[courses.length - 1].endDate) : new Date();
     
-    console.log(`=== AGGIORNAMENTO STATISTICHE ===`);
-    console.log(`Ore totali calcolate: ${totalHours}`);
-    console.log(`Settimane totali (somma reale): ${totalWeeks}`);
-    console.log(`Settimane totali (calcolo semplice): ${Math.ceil(totalHours / weeklyHours)}`);
-    console.log(`Corsi totali: ${courses.length}`);
+    Logger.calc(`=== AGGIORNAMENTO STATISTICHE ===`);
+    Logger.calc(`Ore totali calcolate: ${totalHours}`);
+    Logger.calc(`Settimane totali (somma reale): ${totalWeeks}`);
+    Logger.calc(`Settimane totali (calcolo semplice): ${Math.ceil(totalHours / weeklyHours)}`);
+    Logger.calc(`Corsi totali: ${courses.length}`);
     
     document.getElementById('totalHours').textContent = Math.round(totalHours);
     document.getElementById('totalWeeks').textContent = totalWeeks;

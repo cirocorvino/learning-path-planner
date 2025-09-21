@@ -83,7 +83,7 @@ function calculateBarPosition(startDate, endDate) {
     const left = (startOffset / totalDays) * 100;
     const width = (duration / totalDays) * 100;
     
-    console.log(`Course: left=${left.toFixed(1)}%, width=${width.toFixed(1)}%`);
+    Logger.debug(`Course: left=${left.toFixed(1)}%, width=${width.toFixed(1)}%`);
     
     return { 
         left: Math.max(0, left), 

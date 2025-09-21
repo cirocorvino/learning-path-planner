@@ -25,7 +25,7 @@ function loadLastPlan() {
     if (lastPlanId) {
         const savedPlans = getSavedPlans();
         if (savedPlans[lastPlanId]) {
-            console.log('📁 Caricando piano salvato:', lastPlanId);
+            Logger.load('Caricando piano salvato:', lastPlanId);
             loadPlanFromData(savedPlans[lastPlanId]);
             currentPlanId = lastPlanId;
             currentPlanName = savedPlans[lastPlanId].metadata.name;
@@ -33,7 +33,7 @@ function loadLastPlan() {
             
             // Controlla se il piano ha metadata della testata personalizzata
             const hasHeaderData = savedPlans[lastPlanId].metadata.headerTitle || savedPlans[lastPlanId].metadata.headerDescription;
-            console.log('📋 Piano ha dati testata personalizzata:', hasHeaderData);
+            Logger.load('Piano ha dati testata personalizzata:', hasHeaderData);
             
             if (hasHeaderData) {
                 // Usa i dati della testata salvati
@@ -48,7 +48,7 @@ function loadLastPlan() {
             return true; // Piano caricato con successo
         }
     }
-    console.log('📋 Nessun piano salvato trovato, usando configurazione predefinita');
+    Logger.load('Nessun piano salvato trovato, usando configurazione predefinita');
     return false; // Nessun piano caricato
     
     // Se non c'è un piano salvato, NON chiamare recalculateDates qui
@@ -58,7 +58,7 @@ function loadLastPlan() {
 
 // Carica dati del piano
 function loadPlanFromData(planData) {
-    console.log('📥 Caricando dati piano:', {
+    Logger.load('Caricando dati piano:', {
         corsesCount: planData.courses ? planData.courses.length : 0,
         totalHours: planData.courses ? planData.courses.reduce((sum, c) => sum + c.hours, 0) : 0,
         weeklyHours: planData.weeklyHours,
@@ -75,7 +75,7 @@ function loadPlanFromData(planData) {
     // IMPORTANTE: Carica anche i parametri di calcolo
     if (planData.calculationParams) {
         Object.assign(calculationParams, planData.calculationParams);
-        console.log('📊 Parametri di calcolo caricati:', calculationParams);
+        Logger.calc('Parametri di calcolo caricati:', calculationParams);
         updateCalculationDisplay(); // Aggiorna la visualizzazione
     }
     
@@ -85,12 +85,12 @@ function loadPlanFromData(planData) {
     updateStats();
     renderGantt();
     
-    console.log('✅ Dati piano caricati con successo');
+    Logger.load('Dati piano caricati con successo');
 }
 
 // Ottieni dati del piano corrente
 function getCurrentPlanData() {
-    console.log('🔍 getCurrentPlanData() chiamata con:', {
+    Logger.debug('getCurrentPlanData() chiamata con:', {
         currentPlanName,
         currentPlanDescription,
         currentPlanId
@@ -112,14 +112,14 @@ function getCurrentPlanData() {
         }
     };
     
-    console.log('🔍 getCurrentPlanData() restituisce metadata:', result.metadata);
+    Logger.debug('getCurrentPlanData() restituisce metadata:', result.metadata);
     
     return result;
 }
 
 // Aggiorna visualizzazione del piano corrente
 function updateCurrentPlanDisplay(skipHeaderUpdate = false) {
-    console.log('🎯 updateCurrentPlanDisplay chiamata, skipHeaderUpdate:', skipHeaderUpdate);
+    Logger.ui('updateCurrentPlanDisplay chiamata, skipHeaderUpdate:', skipHeaderUpdate);
     
     // Aggiorna il nome nei vari elementi della UI (sempre)
     document.getElementById('currentPlanName').textContent = `📋 ${currentPlanName}`;
@@ -127,7 +127,7 @@ function updateCurrentPlanDisplay(skipHeaderUpdate = false) {
     
     // Aggiorna la testata principale dell'app SOLO se richiesto
     if (!skipHeaderUpdate) {
-        console.log('  Aggiornando testata con:', currentPlanName, currentPlanDescription);
+        Logger.ui('  Aggiornando testata con:', currentPlanName, currentPlanDescription);
         const appTitle = document.getElementById('appTitle');
         const appDescription = document.getElementById('appDescription');
         
@@ -136,7 +136,7 @@ function updateCurrentPlanDisplay(skipHeaderUpdate = false) {
         const descHasInput = appDescription && appDescription.querySelector('input');
         
         if (titleHasInput || descHasInput) {
-            console.log('  ⚠️ Modalità modifica attiva, salto aggiornamento testata');
+            Logger.ui('  ⚠️ Modalità modifica attiva, salto aggiornamento testata');
             return;
         }
         
@@ -158,25 +158,25 @@ function updateCurrentPlanDisplay(skipHeaderUpdate = false) {
             appDescription.classList.remove('custom-plan');
         }
     } else {
-        console.log('  Salto aggiornamento testata (skipHeaderUpdate=true)');
+        Logger.ui('  Salto aggiornamento testata (skipHeaderUpdate=true)');
     }
 }
 
 // Salva piano
 function savePlan() {
-    console.log('🚀 === INIZIO SAVEPLAN() ===');
+    Logger.save('=== INIZIO SAVEPLAN() ===');
     
     // Leggi valori dal form
     const planNameElement = document.getElementById('planName');
     const planDescElement = document.getElementById('planDescription');
     
-    console.log('📋 Elementi form trovati:', {
+    Logger.save('Elementi form trovati:', {
         planNameElement: planNameElement !== null,
         planDescElement: planDescElement !== null
     });
     
     if (!planNameElement || !planDescElement) {
-        console.error('❌ ERRORE: Elementi form non trovati!');
+        Logger.error('ERRORE: Elementi form non trovati!');
         alert('Errore: elementi del form non trovati');
         return;
     }
@@ -184,7 +184,7 @@ function savePlan() {
     const name = planNameElement.value.trim();
     const description = planDescElement.value.trim();
     
-    console.log('📝 Valori letti dal form:', {
+    Logger.save('Valori letti dal form:', {
         name: name,
         description: description,
         nameLength: name.length,
@@ -192,33 +192,33 @@ function savePlan() {
     });
 
     if (!name) {
-        console.log('❌ Validazione fallita: nome vuoto');
+        Logger.error('Validazione fallita: nome vuoto');
         alert('Inserisci un nome per il piano di studio');
         return;
     }
 
-    console.log('💾 Dati dal form VALIDATI:', { name, description });
+    Logger.save('Dati dal form VALIDATI:', { name, description });
     
     // PRIMA aggiorna le variabili globali
-    console.log('🔄 Aggiornamento variabili globali...');
-    console.log('  PRIMA - currentPlanName:', currentPlanName);
-    console.log('  PRIMA - currentPlanDescription:', currentPlanDescription);
-    console.log('  PRIMA - currentPlanId:', currentPlanId);
+    Logger.debug('Aggiornamento variabili globali...');
+    Logger.debug('  PRIMA - currentPlanName:', currentPlanName);
+    Logger.debug('  PRIMA - currentPlanDescription:', currentPlanDescription);
+    Logger.debug('  PRIMA - currentPlanId:', currentPlanId);
     
     const planId = currentPlanId || generatePlanId();
     currentPlanId = planId;
     currentPlanName = name;
     currentPlanDescription = description;
     
-    console.log('  DOPO - currentPlanName:', currentPlanName);
-    console.log('  DOPO - currentPlanDescription:', currentPlanDescription);
-    console.log('  DOPO - currentPlanId:', currentPlanId);
+    Logger.debug('  DOPO - currentPlanName:', currentPlanName);
+    Logger.debug('  DOPO - currentPlanDescription:', currentPlanDescription);
+    Logger.debug('  DOPO - currentPlanId:', currentPlanId);
     
     // POI ottieni i dati del piano (che ora hanno i valori corretti)
-    console.log('📊 Chiamando getCurrentPlanData()...');
+    Logger.debug('Chiamando getCurrentPlanData()...');
     const planData = getCurrentPlanData();
     
-    console.log('📊 PlanData ottenuto:', {
+    Logger.debug('PlanData ottenuto:', {
         hasMetadata: planData.metadata !== undefined,
         metadataName: planData.metadata ? planData.metadata.name : 'undefined',
         metadataDescription: planData.metadata ? planData.metadata.description : 'undefined',
@@ -236,7 +236,7 @@ function savePlan() {
     if (currentTitleElement && currentDescElement) {
         planData.metadata.headerTitle = currentTitleElement.textContent;
         planData.metadata.headerDescription = currentDescElement.textContent;
-        console.log('💾 Salvando metadata testata:', {
+        Logger.save('Salvando metadata testata:', {
             headerTitle: planData.metadata.headerTitle,
             headerDescription: planData.metadata.headerDescription
         });
@@ -254,7 +254,7 @@ function savePlan() {
     }
     planData.metadata.modifiedAt = new Date().toISOString();
 
-    console.log('💾 Dati finali da salvare:', {
+    Logger.save('Dati finali da salvare:', {
         id: planId,
         name: planData.metadata.name,
         description: planData.metadata.description,
@@ -263,30 +263,30 @@ function savePlan() {
     });
     
     // Salva nel localStorage
-    console.log('🗄️ Salvando in localStorage...');
+    Logger.save('Salvando in localStorage...');
     savePlanToStorage(planId, planData);
     
     // Verifica immediata
-    console.log('✅ Verifica immediata localStorage...');
+    Logger.save('Verifica immediata localStorage...');
     const savedPlans = getSavedPlans();
     const justSaved = savedPlans[planId];
     if (justSaved) {
-        console.log('  Piano appena salvato:', {
+        Logger.save('Piano appena salvato:', {
             name: justSaved.metadata.name,
             description: justSaved.metadata.description,
             id: justSaved.metadata.id
         });
     } else {
-        console.error('❌ ERRORE: Piano non trovato dopo salvataggio!');
+        Logger.error('ERRORE: Piano non trovato dopo salvataggio!');
     }
     
     // Aggiorna UI (ma NON la testata, per preservare modifiche utente)
-    console.log('🖥️ Aggiornando UI...');
+    Logger.ui('Aggiornando UI...');
     updateCurrentPlanDisplay(true); // skipHeaderUpdate = true
     closeSaveModal();
     
-    console.log('✅ Piano salvato con successo!');
-    console.log('🏁 === FINE SAVEPPLAN() ===\n');
+    Logger.save('Piano salvato con successo!');
+    Logger.save('=== FINE SAVEPPLAN() ===\n');
     alert('Piano di studio salvato con successo!');
 }
 

@@ -2,20 +2,20 @@
 
 // Funzione di inizializzazione principale
 function init() {
-    console.log('🚀 Inizializzazione applicazione...');
+    Logger.debug('Inizializzazione applicazione...');
     
     // Prima inizializza le ore dei corsi (default)
     initializeCourseHours();
-    console.log('✅ Ore inizializzate');
+    Logger.debug('Ore inizializzate');
     
     // POI tenta di caricare l'ultimo piano utilizzato
     // (questo potrebbe sovrascrivere le ore calcolate sopra)
     const wasLoaded = loadLastPlan();
-    console.log('📁 Piano caricato:', wasLoaded ? 'SI' : 'NO (usando default)');
+    Logger.load('Piano caricato:', wasLoaded ? 'SI' : 'NO (usando default)');
     
     // Se non è stato caricato nessun piano, assicurati che le variabili siano corrette
     if (!wasLoaded) {
-        console.log('🔄 Inizializzando valori predefiniti...');
+        Logger.debug('Inizializzando valori predefiniti...');
         currentPlanName = 'Piano Predefinito';
         currentPlanDescription = 'Percorso completo di certificazione professionale - Ore Effettive Ricalcolate';
         currentPlanId = null;
@@ -23,11 +23,11 @@ function init() {
     
     // IMPORTANTE: Calcola le date (che calcola anche le settimane individuali e le statistiche)
     recalculateDates();
-    console.log('📅 Date ricalcolate');
+    Logger.debug('Date ricalcolate');
     
     // Aggiorna display del piano corrente
     updateCurrentPlanDisplay();
-    console.log('🖼️ Display piano aggiornato:', {
+    Logger.ui('Display piano aggiornato:', {
         name: currentPlanName,
         description: currentPlanDescription,
         titleElement: document.getElementById('appTitle').textContent,
@@ -37,7 +37,7 @@ function init() {
     // Aggiorna visualizzazione parametri di calcolo
     updateCalculationDisplay();
     
-    console.log('🎯 Inizializzazione completata:', {
+    Logger.debug('Inizializzazione completata:', {
         totalCourses: courses.length,
         totalHours: courses.reduce((sum, c) => sum + c.hours, 0),
         currentPlan: currentPlanName,
@@ -51,7 +51,7 @@ function init() {
     weeklyHoursInput.style.background = '#f0f0f0';
     startDateInput.style.background = '#f0f0f0';
     
-    console.log('✅ Inizializzazione completata');
+    Logger.debug('Inizializzazione completata');
 }
 
 // Inizializza l'applicazione al caricamento della pagina

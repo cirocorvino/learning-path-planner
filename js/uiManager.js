@@ -67,7 +67,7 @@ function makeHeaderReadonly() {
         if (newTitle !== title.getAttribute('data-original')) {
             // Il testo è cambiato
             currentPlanName = newTitle;
-            console.log('🎯 makeHeaderReadonly - Titolo salvato:', currentPlanName);
+            Logger.ui('makeHeaderReadonly - Titolo salvato:', currentPlanName);
             saveHeaderMetadata();
         }
         title.removeAttribute('data-original');
@@ -83,7 +83,7 @@ function makeHeaderReadonly() {
         if (newDesc !== description.getAttribute('data-original')) {
             // Il testo è cambiato
             currentPlanDescription = newDesc;
-            console.log('🎯 makeHeaderReadonly - Descrizione salvata:', currentPlanDescription);
+            Logger.ui('makeHeaderReadonly - Descrizione salvata:', currentPlanDescription);
             saveHeaderMetadata();
         }
         description.removeAttribute('data-original');
@@ -93,7 +93,7 @@ function makeHeaderReadonly() {
 // Salva i metadata della testata separatamente
 function saveHeaderMetadata() {
     if (!currentPlanId) {
-        console.log('⚠️ Nessun piano corrente, skip saveHeaderMetadata');
+        Logger.debug('Nessun piano corrente, skip saveHeaderMetadata');
         return;
     }
     
@@ -103,7 +103,7 @@ function saveHeaderMetadata() {
         savedPlans[currentPlanId].metadata.headerDescription = currentPlanDescription;
         
         localStorage.setItem('saved-plans', JSON.stringify(savedPlans));
-        console.log('💾 Metadata testata salvati:', {
+        Logger.save('Metadata testata salvati:', {
             headerTitle: currentPlanName,
             headerDescription: currentPlanDescription
         });
@@ -134,9 +134,9 @@ function makeCalculationParamsReadonly() {
 
 // Update functions
 function updateAppTitle(value) {
-    console.log('🎯 updateAppTitle chiamata con:', value);
+    Logger.ui('updateAppTitle chiamata con:', value);
     currentPlanName = value;
-    console.log('  currentPlanName aggiornato a:', currentPlanName);
+    Logger.ui('currentPlanName aggiornato a:', currentPlanName);
     
     // Salva anche nei metadata della testata
     saveHeaderMetadata();
@@ -144,9 +144,9 @@ function updateAppTitle(value) {
 }
 
 function updateAppDescription(value) {
-    console.log('🎯 updateAppDescription chiamata con:', value);
+    Logger.ui('updateAppDescription chiamata con:', value);
     currentPlanDescription = value;
-    console.log('  currentPlanDescription aggiornato a:', currentPlanDescription);
+    Logger.ui('currentPlanDescription aggiornato a:', currentPlanDescription);
     
     // Salva anche nei metadata della testata
     saveHeaderMetadata();
