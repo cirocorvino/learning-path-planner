@@ -136,19 +136,27 @@ function getWeekModules(courseName, weekIndex) {
     
     for (const module of modules) {
         const effectiveTime = calculateModuleEffectiveTime(module);
+        let remainingTime = effectiveTime;
         
-        if (currentWeek === weekIndex) {
-            weekModules.push({
-                name: module.name,
-                time: module.time,
-                effectiveTime: effectiveTime
-            });
-        }
-        
-        currentHour += effectiveTime;
-        if (currentHour >= hoursPerWeek) {
-            currentWeek++;
-            currentHour = currentHour % hoursPerWeek;
+        while (remainingTime > 0) {
+            const spaceInCurrentWeek = hoursPerWeek - currentHour;
+            const timeForThisWeek = Math.min(remainingTime, spaceInCurrentWeek);
+            
+            if (currentWeek === weekIndex && timeForThisWeek > 0) {
+                weekModules.push({
+                    name: module.name,
+                    time: module.time,
+                    effectiveTime: timeForThisWeek
+                });
+            }
+            
+            currentHour += timeForThisWeek;
+            remainingTime -= timeForThisWeek;
+            
+            if (currentHour >= hoursPerWeek) {
+                currentWeek++;
+                currentHour = 0;
+            }
         }
     }
     

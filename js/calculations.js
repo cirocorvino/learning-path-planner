@@ -63,8 +63,14 @@ function recalculateDates() {
         course.startDate = new Date(currentDate).toISOString().split('T')[0];
         const weeksNeeded = Math.ceil(course.hours / weeklyHours);
         course.weeks = weeksNeeded;
+        
+        // Calcola correttamente la data di fine: ultimo giorno della settimana finale
+        const courseEndDate = new Date(currentDate);
+        courseEndDate.setDate(courseEndDate.getDate() + (weeksNeeded * 7) - 1);
+        course.endDate = courseEndDate.toISOString().split('T')[0];
+        
+        // Aggiorna currentDate per il prossimo corso (inizio settimana successiva)
         currentDate.setDate(currentDate.getDate() + (weeksNeeded * 7));
-        course.endDate = new Date(currentDate).toISOString().split('T')[0];
     });
     
     updateStats();
