@@ -140,7 +140,7 @@ function updateAppTitle(value) {
     
     // Salva anche nei metadata della testata
     saveHeaderMetadata();
-    autoSaveCurrentPlan();
+    
 }
 
 function updateAppDescription(value) {
@@ -150,7 +150,7 @@ function updateAppDescription(value) {
     
     // Salva anche nei metadata della testata
     saveHeaderMetadata();
-    autoSaveCurrentPlan();
+    
 }
 
 // Cancella tutte le personalizzazioni delle settimane

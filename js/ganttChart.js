@@ -172,7 +172,7 @@ function updateCourse(courseId, field, value) {
         if (field === 'hours' || field === 'startDate') {
             recalculateDates();
         } else {
-            autoSaveCurrentPlan();
+            
         }
     }
 }

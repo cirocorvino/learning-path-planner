@@ -383,7 +383,7 @@ function addWeekTopic() {
     // Rigenera lo schedule per includere il nuovo modulo
     weeklySchedules[weekKey] = generateWeekSchedule(selectedCourse.name, selectedWeek);
     
-    autoSaveCurrentPlan();
+    
     renderCourseDetail();
 }
 
@@ -398,7 +398,7 @@ function removeWeekTopic(index) {
         // Rigenera lo schedule senza il modulo rimosso
         weeklySchedules[weekKey] = generateWeekSchedule(selectedCourse.name, selectedWeek);
         
-        autoSaveCurrentPlan();
+        
         renderCourseDetail();
     }
 }
@@ -414,7 +414,7 @@ function updateModuleName(index, newName) {
         // Rigenera lo schedule per aggiornare i nomi nelle sessioni
         weeklySchedules[weekKey] = generateWeekSchedule(selectedCourse.name, selectedWeek);
         
-        autoSaveCurrentPlan();
+        
         renderCourseDetail();
     }
 }
@@ -432,7 +432,7 @@ function updateModuleHours(index, newHours) {
         // Rigenera lo schedule per ridistribuire le ore
         weeklySchedules[weekKey] = generateWeekSchedule(selectedCourse.name, selectedWeek);
         
-        autoSaveCurrentPlan();
+        
         renderCourseDetail();
     }
 }
@@ -466,7 +466,7 @@ function updateSession(day, index, field, value) {
         sortSessionsByTime(weekKey, day);
     }
     
-    autoSaveCurrentPlan();
+    
     
     if (editMode) {
         renderCourseDetail();
@@ -476,7 +476,7 @@ function updateSession(day, index, field, value) {
 function removeSession(day, index) {
     const weekKey = `${selectedCourse.id}-${selectedWeek}`;
     weeklySchedules[weekKey][day].splice(index, 1);
-    autoSaveCurrentPlan();
+    
     renderCourseDetail();
 }
 
