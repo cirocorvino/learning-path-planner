@@ -1,0 +1,82 @@
+{
+  "kind": "organizer-database",
+  "schemaVersion": 1,
+  "metadata": {
+    "name": "Organizer dimostrativo",
+    "createdAt": "2026-07-13T00:00:00.000Z",
+    "updatedAt": "2026-07-13T00:00:00.000Z"
+  },
+  "settings": {
+    "defaultSessionMinutes": 90,
+    "calculationParams": {
+      "theoryMultiplier": 1,
+      "practiceMultiplier": 1,
+      "exerciseHours": 2,
+      "projectHours": 4
+    }
+  },
+  "categories": [
+    { "id": "study", "label": "Studio", "icon": "📚" },
+    { "id": "work", "label": "Lavoro", "icon": "💼" },
+    { "id": "fitness", "label": "Fitness", "icon": "🏃" },
+    { "id": "personal", "label": "Personale", "icon": "📌" },
+    { "id": "other", "label": "Altro", "icon": "🗓️" }
+  ],
+  "weekTemplate": {
+    "Lunedì": [
+      { "time": "09:00-17:00", "content": "Attività lavorativa", "type": "work" },
+      { "time": "19:00-20:00", "content": "Attività fisica", "type": "fitness" }
+    ],
+    "Martedì": [
+      { "time": "09:00-17:00", "content": "Attività lavorativa", "type": "work" },
+      { "time": "18:30-20:00", "content": "", "type": "study" }
+    ],
+    "Mercoledì": [
+      { "time": "09:00-17:00", "content": "Attività lavorativa", "type": "work" }
+    ],
+    "Giovedì": [
+      { "time": "09:00-17:00", "content": "Attività lavorativa", "type": "work" },
+      { "time": "18:30-20:00", "content": "", "type": "study" }
+    ],
+    "Venerdì": [
+      { "time": "09:00-17:00", "content": "Attività lavorativa", "type": "work" }
+    ],
+    "Sabato": [
+      { "time": "09:00-11:00", "content": "", "type": "study" }
+    ],
+    "Domenica": []
+  },
+  "studyProgram": {
+    "kind": "study-program",
+    "schemaVersion": 1,
+    "id": "example-study-program",
+    "title": "Programma di studio dimostrativo",
+    "description": "Esempio fittizio privo di dati personali",
+    "startDate": "2026-08-03",
+    "weeklyHours": 5,
+    "courses": [
+      {
+        "id": 1,
+        "name": "Fondamenti",
+        "color": "#5B8FF9",
+        "modules": [
+          { "name": "Definizione degli obiettivi - Teoria", "time": 1 },
+          { "name": "Preparazione dell'ambiente - Pratica", "time": 2 }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Applicazione",
+        "color": "#61DDAA",
+        "modules": [
+          { "name": "Prima funzionalità - Pratica", "time": 3 },
+          { "name": "Test e revisione - Esercitazione", "time": 2 }
+        ]
+      }
+    ]
+  },
+  "state": {
+    "weeklySchedules": {},
+    "courseTopics": {}
+  }
+}
