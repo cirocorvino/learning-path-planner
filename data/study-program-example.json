@@ -1,0 +1,35 @@
+{
+  "kind": "study-program",
+  "schemaVersion": 1,
+  "id": "example-web-development",
+  "title": "Programma dimostrativo di sviluppo web",
+  "description": "Esempio generico importabile; può essere sostituito con il proprio programma.",
+  "startDate": "2026-08-03",
+  "weeklyTargetMinutes": 360,
+  "units": [
+    {
+      "module": "Fondamenti",
+      "order": 10,
+      "title": "Definire obiettivi e risultati attesi - Teoria",
+      "estimatedMinutes": 60
+    },
+    {
+      "module": "Fondamenti",
+      "order": 20,
+      "title": "Preparare ambiente e repository - Pratica",
+      "estimatedMinutes": 120
+    },
+    {
+      "module": "Applicazione",
+      "order": 30,
+      "title": "Realizzare la prima funzionalità - Pratica",
+      "estimatedMinutes": 180
+    },
+    {
+      "module": "Applicazione",
+      "order": 40,
+      "title": "Test e revisione - Esercitazione",
+      "estimatedMinutes": 120
+    }
+  ]
+}
