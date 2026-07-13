@@ -1,0 +1,15 @@
+# Esportazioni e backup locali
+exports/
+backups/
+data/private/
+data/user/
+
+*.personal.json
+*.private.json
+*.local.json
+organizer-data-*.json
+
+# File temporanei
+.DS_Store
+Thumbs.db
+*.log
