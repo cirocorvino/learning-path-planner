@@ -1,10 +1,10 @@
-// main.js - Adattamento del planner al corso .NET e inizializzazione
+// main.js - Inizializzazione dell'organizer e adattamenti del planner esistente
 
 (function () {
     'use strict';
 
     function parseLocalDate(value) {
-        const [year, month, day] = value.split('-').map(Number);
+        const [year, month, day] = String(value).split('-').map(Number);
         return new Date(year, month - 1, day, 12, 0, 0, 0);
     }
 
@@ -15,9 +15,22 @@
         return `${year}-${month}-${day}`;
     }
 
+    function decorateSessionContent(session) {
+        const icon = activityIcons[session.type] || activityIcons.other || '📌';
+        const label = activityLabels[session.type] || activityLabels.other || 'Attività';
+        const content = String(session.content || '').trim();
+
+        if (content.startsWith(icon)) return content;
+        return content ? `${icon} ${content}` : `${icon} ${label}`;
+    }
+
     // Supporta moduli di pausa a ore zero ma con durata di calendario esplicita.
     window.recalculateDates = function () {
-        globalStartDate = document.getElementById('startDate').value;
+        const startDateInput = document.getElementById('startDate');
+        if (startDateInput?.value) {
+            globalStartDate = startDateInput.value;
+        }
+
         let currentDate = parseLocalDate(globalStartDate);
 
         courses.forEach(course => {
@@ -30,16 +43,19 @@
             }
 
             course.startDate = toIsoLocalDate(currentDate);
-            const calculatedWeeks = Math.ceil(course.hours / weeklyHours);
+            const calculatedWeeks = weeklyHours > 0
+                ? Math.ceil(course.hours / weeklyHours)
+                : 0;
             course.weeks = Number.isInteger(course.fixedWeeks)
                 ? course.fixedWeeks
                 : calculatedWeeks;
 
             const courseEndDate = new Date(currentDate);
-            courseEndDate.setDate(courseEndDate.getDate() + (course.weeks * 7) - 1);
+            const durationDays = Math.max(course.weeks * 7, 1);
+            courseEndDate.setDate(courseEndDate.getDate() + durationDays - 1);
             course.endDate = toIsoLocalDate(courseEndDate);
 
-            currentDate.setDate(currentDate.getDate() + (course.weeks * 7));
+            currentDate.setDate(currentDate.getDate() + durationDays);
         });
 
         updateStats();
@@ -57,16 +73,10 @@
 
         Object.keys(schedule).forEach(day => {
             schedule[day].forEach(session => {
-                if (session.type === 'prayer') {
-                    session.content = `${activityIcons.prayer} Lodi + Letture`;
-                } else if (session.type === 'work') {
-                    session.content = `${activityIcons.work} Lavoro`;
-                } else if (session.type === 'community') {
-                    session.content = `${activityIcons.community} Comunità Neocatecumenale`;
-                } else if (session.type === 'gym') {
-                    session.content = `${activityIcons.gym} Palestra`;
-                } else if (session.type === 'study') {
-                    session.content = `${activityIcons.study} Studio .NET`;
+                if (session.type === 'study') {
+                    session.content = `${activityIcons.study || '📚'} Studio`;
+                } else {
+                    session.content = decorateSessionContent(session);
                 }
             });
         });
@@ -126,7 +136,7 @@
                 if (sessionIndex === -1) return;
 
                 if (sessionModules.length === 0) {
-                    schedule[day][sessionIndex].content = `${activityIcons.study} Revisione libera`;
+                    schedule[day][sessionIndex].content = `${activityIcons.study || '📚'} Revisione libera`;
                     return;
                 }
 
@@ -134,8 +144,8 @@
                 const moduleList = sessionModules.map(module => module.name).join('\n• ');
 
                 schedule[day][sessionIndex].content = sessionModules.length === 1
-                    ? `${activityIcons.study} ${sessionModules[0].name}`
-                    : `${activityIcons.study} ${courseName}:\n• ${moduleList}`;
+                    ? `${activityIcons.study || '📚'} ${sessionModules[0].name}`
+                    : `${activityIcons.study || '📚'} ${courseName}:\n• ${moduleList}`;
             });
         }
 
@@ -153,104 +163,89 @@
         Object.keys(schedule).forEach(day => {
             schedule[day].forEach(session => {
                 if (session.type === 'study') {
-                    session.content = `${activityIcons.study} Studio .NET`;
+                    session.content = `${activityIcons.study || '📚'} Studio`;
                 }
             });
         });
     };
 
-    // Corregge la chiave localStorage usata dal salvataggio della testata.
+    // Il file JSON è la fonte ufficiale; la modifica della testata rende
+    // semplicemente il database corrente da salvare.
     window.saveHeaderMetadata = function () {
-        if (!currentPlanId) return;
-
-        const savedPlans = getSavedPlans();
-        if (!savedPlans[currentPlanId]) return;
-
-        savedPlans[currentPlanId].metadata.headerTitle = currentPlanName;
-        savedPlans[currentPlanId].metadata.headerDescription = currentPlanDescription;
-        localStorage.setItem('saved-study-plans', JSON.stringify(savedPlans));
+        window.FileStore?.markDirty('Titolo o descrizione modificati');
     };
 })();
 
-// Funzione di inizializzazione principale
-function init() {
-    Logger.debug('Inizializzazione applicazione...');
-
-    document.title = 'Corso .NET e Architettura Applicazioni Web';
-
+window.refreshApplicationFromData = function () {
     const weeklyHoursInput = document.getElementById('weeklyHours');
     const startDateInput = document.getElementById('startDate');
-    weeklyHoursInput.value = weeklyHours;
-    startDateInput.value = globalStartDate;
-    document.getElementById('weeklyHoursDisplay').textContent = weeklyHours;
+
+    if (weeklyHoursInput) weeklyHoursInput.value = weeklyHours;
+    if (startDateInput) startDateInput.value = globalStartDate;
+
+    const weeklyHoursDisplay = document.getElementById('weeklyHoursDisplay');
+    if (weeklyHoursDisplay) weeklyHoursDisplay.textContent = weeklyHours;
+
+    initializeCourseHours();
+    recalculateDates();
+    updateCurrentPlanDisplay();
+    updateCalculationDisplay();
+
+    const detailSection = document.getElementById('scheduleDetail');
+    if (detailSection) {
+        detailSection.classList.remove('active');
+        detailSection.innerHTML = '';
+    }
+
+    if (weeklyHoursInput) weeklyHoursInput.style.background = '#f0f0f0';
+    if (startDateInput) startDateInput.style.background = '#f0f0f0';
+};
+
+async function init() {
+    Logger.debug('Inizializzazione organizer locale...');
+
+    document.title = 'Organizer locale e planner di studio';
 
     const ganttTitle = document.querySelector('.gantt-container h2');
     if (ganttTitle) {
-        ganttTitle.textContent = 'Diagramma di Gantt - Corso .NET e Architettura';
+        ganttTitle.textContent = 'Diagramma di Gantt - Programma di studio';
     }
 
     const planNameInput = document.getElementById('planName');
     const planDescriptionInput = document.getElementById('planDescription');
-    if (planNameInput) {
-        planNameInput.placeholder = 'Es: Corso .NET e Architettura 2026';
-    }
-    if (planDescriptionInput) {
-        planDescriptionInput.placeholder = 'Es: Percorso professionale con capstone ProvisioningHub';
-    }
+    if (planNameInput) planNameInput.placeholder = 'Nome del programma di studio';
+    if (planDescriptionInput) planDescriptionInput.placeholder = 'Descrizione del programma';
 
-    // Prima inizializza le ore dei moduli predefiniti.
-    initializeCourseHours();
-    Logger.debug('Ore inizializzate');
-
-    // Conserva il curriculum .NET prima di tentare il caricamento automatico.
-    // In questo modo un vecchio piano AI presente nella stessa origin non
-    // sovrascrive accidentalmente il nuovo programma.
-    const defaultCourses = JSON.parse(JSON.stringify(courses));
-
-    // Poi tenta di caricare l'ultimo piano utilizzato per questa origin.
-    let wasLoaded = loadLastPlan();
-    const isCompatibleDotNetPlan = courses.some(course => course.name === 'Baseline e impostazione');
-
-    if (wasLoaded && !isCompatibleDotNetPlan) {
-        courses = defaultCourses;
-        weeklySchedules = {};
-        courseTopics = {};
-        weeklyHours = 11;
-        globalStartDate = '2026-07-20';
-        currentPlanId = null;
-        localStorage.removeItem('last-used-plan');
-        wasLoaded = false;
+    const loaded = await FileStore.loadDefaultDatabase({ refresh: false });
+    if (!loaded) {
+        FileStore.useEmptyDatabase({ refresh: false });
     }
 
-    Logger.load('Piano caricato:', wasLoaded ? 'SI' : 'NO (usando default .NET)');
+    refreshApplicationFromData();
 
-    if (!wasLoaded) {
-        currentPlanName = 'Corso .NET e Architettura Applicazioni Web';
-        currentPlanDescription = '24 settimane attive, 4 settimane di buffer e 11 ore di studio settimanali';
-        currentPlanId = null;
-        weeklyHoursInput.value = weeklyHours;
-        startDateInput.value = globalStartDate;
-    }
-
-    document.getElementById('weeklyHoursDisplay').textContent = weeklyHours;
-    recalculateDates();
-    Logger.debug('Date ricalcolate');
-
-    updateCurrentPlanDisplay();
-    updateCalculationDisplay();
-
-    Logger.debug('Inizializzazione completata:', {
-        totalCourses: courses.length,
-        totalHours: courses.reduce((sum, course) => sum + course.hours, 0),
-        currentPlan: currentPlanName,
-        headerTitle: document.getElementById('appTitle').textContent,
-        headerDesc: document.getElementById('appDescription').textContent
+    document.addEventListener('change', event => {
+        const ignoredIds = new Set(['databaseFileInput', 'studyProgramFileInput']);
+        if (!ignoredIds.has(event.target?.id)) {
+            FileStore.markDirty();
+        }
     });
 
-    weeklyHoursInput.style.background = '#f0f0f0';
-    startDateInput.style.background = '#f0f0f0';
+    Logger.debug('Organizer inizializzato:', {
+        courses: courses.length,
+        weeklyHours,
+        startDate: globalStartDate,
+        currentPlan: currentPlanName
+    });
 }
 
 window.onload = function () {
-    init();
+    init().catch(error => {
+        Logger.error('Errore fatale durante l\'inizializzazione:', error);
+        const status = document.getElementById('databaseStatus');
+        if (status) {
+            status.textContent = `Errore di inizializzazione: ${error.message}`;
+            status.style.color = '#dc3545';
+        }
+        alert(`Impossibile inizializzare l'applicazione: ${error.message}`);
+    });
 };

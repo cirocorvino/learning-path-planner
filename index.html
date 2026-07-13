@@ -3,55 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Piano di Studio AI Development - Sistema Completo</title>
-    
-    <!-- Favicon -->
+    <title>Organizer locale e planner di studio</title>
+
     <link rel="icon" type="image/svg+xml" href="Style/favicon.svg">
     <link rel="icon" type="image/x-icon" href="Style/favicon.ico">
     <link rel="apple-touch-icon" sizes="180x180" href="Style/favicon.svg">
-    
-    <!-- PWA Manifest -->
     <link rel="manifest" href="Style/manifest.json">
     <meta name="theme-color" content="#6C5CE7">
-    
     <link rel="stylesheet" href="Style/styles.css">
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
-            <h1 id="appTitle">📊 Piano di Studio AI Development</h1>
-            <p id="appDescription">Percorso completo di certificazione professionale - Ore Effettive Ricalcolate</p>
+            <h1 id="appTitle">📅 Organizer locale e planner di studio</h1>
+            <p id="appDescription">Attività ricorrenti, programmi di studio e calendario in un semplice file JSON</p>
         </div>
-        
-        <!-- Calculation Info -->
+
         <div class="calculation-info">
-            <h3>ℹ️ Calcolo Ore Effettive</h3>
+            <h3>ℹ️ Calcolo ore effettive</h3>
             <ul id="calculationDisplay">
-                <li><strong>Teoria:</strong> ore originali × <span id="theoryMultiplier">1.5</span></li>
-                <li><strong>Pratica:</strong> ore originali × <span id="practiceMultiplier">1.2</span></li>
+                <li><strong>Teoria:</strong> ore originali × <span id="theoryMultiplier">1</span></li>
+                <li><strong>Pratica:</strong> ore originali × <span id="practiceMultiplier">1</span></li>
                 <li><strong>Esercitazioni:</strong> <span id="exerciseHours">3</span> ore per esercitazione</li>
-                <li><strong>Progetti:</strong> <span id="projectHours">5</span> ore per progetto</li>
+                <li><strong>Progetti:</strong> <span id="projectHours">8</span> ore per progetto</li>
             </ul>
         </div>
-        
-        <!-- Settings Bar -->
+
         <div class="settings-bar">
             <div class="setting-group">
                 <span class="setting-label">Ore settimanali:</span>
-                <input type="number" id="weeklyHours" class="setting-input" value="15" onchange="updateWeeklyHours()" readonly>
+                <input type="number" id="weeklyHours" class="setting-input" value="10" onchange="updateWeeklyHours()" readonly>
             </div>
             <div class="setting-group">
                 <span class="setting-label">Data inizio:</span>
-                <input type="date" id="startDate" class="setting-input" style="width: 150px;" value="2025-09-08" onchange="recalculateDates()" readonly>
+                <input type="date" id="startDate" class="setting-input" style="width: 150px;" onchange="recalculateDates()" readonly>
+            </div>
+            <div class="setting-group" style="min-width: 280px;">
+                <span class="setting-label">Database:</span>
+                <span id="databaseStatus" style="font-size: 0.9em; font-weight: 600;">Inizializzazione…</span>
             </div>
         </div>
-        
-        <!-- Stats -->
+
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-value" id="totalHours">0</div>
-                <div class="stat-label">Ore Totali Effettive</div>
+                <div class="stat-label">Ore totali effettive</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="totalWeeks">0</div>
@@ -59,11 +55,11 @@
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="totalCourses">0</div>
-                <div class="stat-label">Corsi</div>
+                <div class="stat-label">Moduli</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" id="weeklyHoursDisplay">15</div>
-                <div class="stat-label">Ore/Sett</div>
+                <div class="stat-value" id="weeklyHoursDisplay">10</div>
+                <div class="stat-label">Ore/sett.</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="startDateDisplay">-</div>
@@ -74,74 +70,69 @@
                 <div class="stat-label">Fine</div>
             </div>
         </div>
-        
-        <!-- Toolbar -->
+
         <div class="toolbar">
-            <div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                 <button class="btn btn-primary" onclick="toggleEditMode()">
                     ✏️ <span id="editBtnText">Modifica</span>
                 </button>
                 <button class="btn btn-warning" onclick="showAddCourseModal()">
-                    ➕ Aggiungi Corso
+                    ➕ Aggiungi modulo
                 </button>
-                <button class="btn btn-success" onclick="showSaveModal()">
-                    💾 Salva Piano
+                <button class="btn btn-info" onclick="FileStore.openDatabase()">
+                    📂 Apri database
                 </button>
-                <button class="btn btn-info" onclick="showLoadModal()">
-                    📁 Gestisci Piani
+                <button class="btn btn-success" onclick="FileStore.saveDatabase()">
+                    💾 Salva database
                 </button>
-                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
-                    📥 Importa File
+                <button class="btn btn-primary" onclick="FileStore.selectStudyProgram()">
+                    📚 Importa programma
                 </button>
-                <input type="file" id="fileInput" class="hidden" accept=".json" onchange="loadData(event)">
+                <input type="file" id="databaseFileInput" class="hidden" accept="application/json,.json"
+                       onchange="FileStore.handleDatabaseFileInput(event)">
+                <input type="file" id="studyProgramFileInput" class="hidden" accept="application/json,.json"
+                       onchange="FileStore.handleStudyProgramFileInput(event)">
             </div>
             <div>
                 <span id="currentPlanName" style="color: #667eea; font-weight: 600;"></span>
             </div>
         </div>
-        
-        <!-- Gantt Chart -->
+
         <div class="gantt-container">
-            <h2 style="color: #667eea; margin-bottom: 20px;">Diagramma di Gantt - Pianificazione Corsi</h2>
-            <p style="color: #666; margin-bottom: 20px;">💡 Clicca su ogni corso per vedere la schedulazione settimanale dettagliata con gli argomenti specifici</p>
-            
-            <div id="timelineMonths" class="timeline-months">
-                <!-- I mesi verranno generati da JavaScript -->
-            </div>
-            
+            <h2 style="color: #667eea; margin-bottom: 20px;">Diagramma di Gantt - Programma di studio</h2>
+            <p style="color: #666; margin-bottom: 20px;">
+                💡 Apri un modulo per vedere e modificare la distribuzione settimanale delle attività.
+            </p>
+
+            <div id="timelineMonths" class="timeline-months"></div>
+
             <table class="gantt-table">
                 <thead>
                     <tr>
-                        <th style="width: 20%;">Corso</th>
-                        <th style="width: 8%;">Ore Eff.</th>
+                        <th style="width: 20%;">Modulo</th>
+                        <th style="width: 8%;">Ore eff.</th>
                         <th style="width: 8%;">Sett.</th>
                         <th style="width: 12%;">Periodo</th>
                         <th style="width: 52%;" id="timelineHeader">Timeline</th>
                     </tr>
                 </thead>
-                <tbody id="ganttBody">
-                    <!-- Populated by JavaScript -->
-                </tbody>
+                <tbody id="ganttBody"></tbody>
             </table>
         </div>
-        
-        <!-- Schedule Detail Section -->
-        <div id="scheduleDetail" class="schedule-detail">
-            <!-- Populated by JavaScript -->
-        </div>
+
+        <div id="scheduleDetail" class="schedule-detail"></div>
     </div>
-    
-    <!-- Add Course Modal -->
+
     <div id="addCourseModal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">Aggiungi Nuovo Corso</div>
+            <div class="modal-header">Aggiungi modulo</div>
             <div class="form-group">
-                <label class="form-label">Nome del corso:</label>
-                <input type="text" id="newCourseName" class="form-input" placeholder="Es: Machine Learning Avanzato">
+                <label class="form-label">Nome del modulo:</label>
+                <input type="text" id="newCourseName" class="form-input" placeholder="Es: Testing e qualità">
             </div>
             <div class="form-group">
                 <label class="form-label">Ore totali:</label>
-                <input type="number" id="newCourseHours" class="form-input" placeholder="Es: 30">
+                <input type="number" id="newCourseHours" class="form-input" placeholder="Es: 20">
             </div>
             <div class="form-group">
                 <label class="form-label">Colore:</label>
@@ -153,62 +144,52 @@
             </div>
         </div>
     </div>
-    
-    <!-- Save Plan Modal -->
+
+    <!-- Modali legacy mantenute per compatibilità con i piani localStorage esistenti. -->
     <div id="savePlanModal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">Salva Piano di Studio</div>
+            <div class="modal-header">Salva piano legacy</div>
             <div class="form-group">
                 <label class="form-label">Nome del piano:</label>
-                <input type="text" id="planName" class="form-input" placeholder="Es: Piano AI Development - Settembre 2025">
+                <input type="text" id="planName" class="form-input">
             </div>
             <div class="form-group">
-                <label class="form-label">Descrizione (opzionale):</label>
-                <input type="text" id="planDescription" class="form-input" placeholder="Es: Piano completo con specializzazione LLM">
+                <label class="form-label">Descrizione:</label>
+                <input type="text" id="planDescription" class="form-input">
             </div>
             <div class="form-buttons">
-                <button class="btn btn-success" onclick="savePlan()">💾 Salva</button>
-                <button class="btn btn-warning" onclick="exportPlan()">📤 Esporta File</button>
+                <button class="btn btn-success" onclick="savePlan()">Salva</button>
                 <button class="btn btn-primary" onclick="closeSaveModal()">Annulla</button>
             </div>
         </div>
     </div>
-    
-    <!-- Load Plan Modal -->
+
     <div id="loadPlanModal" class="modal">
         <div class="modal-content" style="max-width: 700px;">
-            <div class="modal-header">Gestisci Piani di Studio</div>
-            
+            <div class="modal-header">Piani legacy</div>
             <div style="margin-bottom: 20px;">
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                    <strong>Piano Corrente:</strong> <span id="currentPlanDisplay">Nessun piano caricato</span>
+                    <strong>Piano corrente:</strong> <span id="currentPlanDisplay">Nessun piano caricato</span>
                 </div>
             </div>
-            
-            <div id="savedPlansList" style="max-height: 400px; overflow-y: auto;">
-                <!-- Populated by JavaScript -->
-            </div>
-            
+            <div id="savedPlansList" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="form-buttons">
                 <button class="btn btn-primary" onclick="closeLoadModal()">Chiudi</button>
             </div>
         </div>
     </div>
-    
-    <!-- Delete Plan Confirmation Modal -->
+
     <div id="deletePlanModal" class="modal">
         <div class="modal-content" style="max-width: 400px;">
-            <div class="modal-header">Conferma Eliminazione</div>
-            <p>Sei sicuro di voler eliminare il piano "<span id="planToDelete"></span>"?</p>
-            <p style="color: #ef4444; font-size: 0.9em;">Questa azione non può essere annullata.</p>
+            <div class="modal-header">Conferma eliminazione</div>
+            <p>Eliminare il piano “<span id="planToDelete"></span>”?</p>
             <div class="form-buttons">
-                <button class="btn btn-warning" onclick="confirmDeletePlan()">🗑️ Elimina</button>
+                <button class="btn btn-warning" onclick="confirmDeletePlan()">Elimina</button>
                 <button class="btn btn-primary" onclick="closeDeleteModal()">Annulla</button>
             </div>
         </div>
     </div>
-    
-    <!-- JavaScript Files -->
+
     <script src="js/logger.js"></script>
     <script src="js/config.js"></script>
     <script src="js/data.js"></script>
@@ -218,19 +199,7 @@
     <script src="js/courseDetail.js"></script>
     <script src="js/modalManager.js"></script>
     <script src="js/uiManager.js"></script>
+    <script src="js/fileStore.js"></script>
     <script src="js/main.js"></script>
-    
-    <!-- Script di test (rimuovi in produzione) -->
-    <!-- <script src="test/test_calcoli_corretti.js"></script> -->
-    <!-- <script src="test/test_rapido.js"></script> -->
-    <!-- <script src="test/test_bug_salvataggio.js"></script>
-    <script src="test/debug_metadata.js"></script>
-    <script src="test/test_simulazione_utente.js"></script>
-    <script src="test/test_immediato.js"></script>
-    <script src="test/test_testata.js"></script>
-    <script src="test/test_percorsi.js"></script>
-    <script src="test/convert_logs.js"></script>
-    <script src="test/test_logger.js"></script>
-    <script src="test/test_settimane_corrette.js"></script> -->
 </body>
 </html>
