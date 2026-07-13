@@ -6,8 +6,14 @@
 *.userosscache
 *.sln.docstates
 
-# Tooling Node opzionale per il server locale
+# Tooling Node opzionale usato solo per il server locale
+# L'app non usa dipendenze Node né librerie npm.
 node_modules/
+package.json
+package-lock.json
+npm-shrinkwrap.json
+yarn.lock
+pnpm-lock.yaml
 .npm/
 .pnpm-store/
 .yarn/
