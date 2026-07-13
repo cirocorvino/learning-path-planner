@@ -1,7 +1,7 @@
 {
-  "name": "Corso .NET e Architettura Applicazioni Web",
-  "short_name": ".NET StudyPlan",
-  "description": "Pianificazione locale del percorso professionale .NET e application architecture",
+  "name": "Organizer locale e planner di studio",
+  "short_name": "Organizer",
+  "description": "Pianificazione locale di attività ricorrenti e programmi di studio tramite file JSON",
   "icons": [
     {
       "src": "favicon.svg",

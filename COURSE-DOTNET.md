@@ -1,6 +1,6 @@
 # Corso .NET e Architettura Applicazioni Web
 
-Configurazione del planner per il percorso professionale .NET, costruito sui quattro libri selezionati e sul progetto capstone **ProvisioningHub**.
+Configurazione privata del planner per il percorso professionale .NET costruito sui quattro libri selezionati e sul capstone **ProvisioningHub**.
 
 ## Numeri del piano
 
@@ -11,14 +11,14 @@ Configurazione del planner per il percorso professionale .NET, costruito sui qua
 - Impegno: **11 ore settimanali**
 - Ore effettive complessive: **264**
 
-Le pause programmate sono:
+Pause programmate:
 
-- 10-23 agosto 2026
-- 21 dicembre 2026-3 gennaio 2027
+- 10-23 agosto 2026;
+- 21 dicembre 2026-3 gennaio 2027.
 
 ## Settimana tipo
 
-| Giorno | Orario | Durata | Tipo di attività |
+| Giorno | Orario | Durata | Attività di studio |
 |---|---|---:|---|
 | Lunedì | 20:45-21:30 | 0,75 h | Richiamo leggero dopo palestra |
 | Martedì | 18:30-20:00 | 1,5 h | Lettura guidata e sintesi |
@@ -28,56 +28,36 @@ Le pause programmate sono:
 | Sabato | 14:30-16:00 | 1,5 h | Test, refactoring e documentazione |
 | Domenica | 10:30-12:00 | 1,5 h | Consolidamento e pianificazione |
 
-Vincoli fissi già configurati:
-
-- lavoro dal lunedì al venerdì, 09:00-18:00;
-- palestra lunedì, mercoledì e venerdì, 18:30-20:00;
-- venerdì senza sessioni di studio;
-- preghiera e comunità mantenute dal template precedente.
+Il template completo, compresi gli altri impegni ricorrenti, si trova esclusivamente nel database privato `data/organizer-data.json`.
 
 ## Avvio locale
 
-### Primo clone
-
 ```bash
-git clone https://github.com/cirocorvino/AI-Dev-scheduling-app-.git
-cd AI-Dev-scheduling-app-
-git switch course/dotnet-architecture-2026
+git switch main
+git pull origin main
 python -m http.server 3001
 ```
 
-Aprire nel browser:
+Aprire `http://localhost:3001`.
 
-```text
-http://localhost:3001
-```
+## Database e salvataggio
 
-La porta `3001` crea una origin distinta e impedisce ai vecchi dati salvati su `localhost:3000` di interferire con il nuovo piano.
+All'avvio viene caricata una copia di `data/organizer-data.json` tramite HTTP. Questa copia non è automaticamente collegata al file sul disco.
 
-### Repository già clonato
+Per lavorare direttamente sul file locale:
 
-```bash
-git fetch origin
-git switch course/dotnet-architecture-2026
-git pull
-python -m http.server 3001
-```
+1. premere **Apri database**;
+2. selezionare `data/organizer-data.json` dalla copia locale del repository;
+3. apportare le modifiche;
+4. premere **Salva database**.
 
-In alternativa, con Node.js:
+Quando il browser non consente la scrittura diretta, **Salva database** genera una nuova copia JSON da sostituire manualmente.
 
-```bash
-npx http-server . -p 3001
-```
+## Importazione di un altro programma
 
-## Primo utilizzo
+Il pulsante **Importa programma** accetta un file `study-program` JSON. Il programma importato sostituisce quello visualizzato, mentre attività ricorrenti e slot settimanali restano invariati. Dopo l'importazione occorre salvare il database.
 
-1. Aprire il Gantt e verificare data iniziale, 11 ore settimanali e 28 settimane di calendario.
-2. Fare clic su **Baseline e impostazione** per vedere la distribuzione della prima settimana.
-3. Entrare in modalità **Modifica** solo per adattare una settimana eccezionale.
-4. Salvare il piano con il nome `Corso .NET e Architettura 2026-2027`.
-5. Esportare periodicamente il JSON come backup.
-
-I dati restano nel `localStorage` del browser. L'esportazione JSON è quindi consigliata al termine di ogni checkpoint mensile.
+Un esempio generico è disponibile in `data/study-program-example.json`.
 
 ## Struttura del percorso
 
@@ -94,4 +74,4 @@ I dati restano nel `localStorage` del browser. L'esportazione JSON è quindi con
 11. Cloud e operabilità II
 12. Hardening e portfolio
 
-I nomi dei singoli argomenti indicano anche il libro principale di riferimento: **Lock**, **Marcotte**, **Price** oppure **Software Architecture**.
+Le singole attività indicano anche il libro principale di riferimento: **Lock**, **Marcotte**, **Price** oppure **Software Architecture**.

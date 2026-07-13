@@ -1,21 +1,19 @@
 // ganttChart.js - Gestione del diagramma di Gantt
 
-// Render del diagramma di Gantt
 function renderGantt() {
-    // Generate timeline months first
     generateTimelineMonths();
-    
+
     const tbody = document.getElementById('ganttBody');
     tbody.innerHTML = '';
-    
+
     courses.forEach(course => {
         const position = calculateBarPosition(course.startDate, course.endDate);
         const row = document.createElement('tr');
-        
+
         if (editMode) {
             row.innerHTML = `
                 <td>
-                    <input class="course-input" value="${course.name}" 
+                    <input class="course-input" value="${course.name}"
                            onchange="updateCourse(${course.id}, 'name', this.value)">
                 </td>
                 <td>
@@ -29,7 +27,7 @@ function renderGantt() {
                 </td>
                 <td>
                     <div class="gantt-bar-container">
-                        <div class="gantt-bar" 
+                        <div class="gantt-bar"
                              style="left: ${position.left}%; width: ${position.width}%; background: ${course.color};"
                              onclick="showCourseDetail(${course.id})">
                             ${course.weeks} sett
@@ -46,7 +44,7 @@ function renderGantt() {
                 <td>${formatDate(course.startDate)}-${formatDate(course.endDate)}</td>
                 <td>
                     <div class="gantt-bar-container">
-                        <div class="gantt-bar" 
+                        <div class="gantt-bar"
                              style="left: ${position.left}%; width: ${position.width}%; background: ${course.color};"
                              onclick="showCourseDetail(${course.id})">
                             ${course.weeks} sett
@@ -59,98 +57,82 @@ function renderGantt() {
     });
 }
 
-// Calcola posizione della barra nel Gantt
 function calculateBarPosition(startDate, endDate) {
     if (courses.length === 0) return { left: 0, width: 10 };
-    
-    // IMPORTANTE: usa le stesse date per barre e mesi
+
     const firstCourseStart = new Date(courses[0].startDate);
     const lastCourseEnd = new Date(courses[courses.length - 1].endDate);
-    
-    // Calcola il periodo totale in giorni
     const totalDays = (lastCourseEnd - firstCourseStart) / (1000 * 60 * 60 * 24);
-    
+
     if (totalDays === 0) return { left: 0, width: 10 };
-    
+
     const courseStart = new Date(startDate);
     const courseEnd = new Date(endDate);
-    
-    // Calcola offset e durata in giorni
     const startOffset = (courseStart - firstCourseStart) / (1000 * 60 * 60 * 24);
     const duration = (courseEnd - courseStart) / (1000 * 60 * 60 * 24);
-    
-    // Converti in percentuali
     const left = (startOffset / totalDays) * 100;
     const width = (duration / totalDays) * 100;
-    
+
     Logger.debug(`Course: left=${left.toFixed(1)}%, width=${width.toFixed(1)}%`);
-    
-    return { 
-        left: Math.max(0, left), 
-        width: Math.min(100, width) // Non superare il 100%
+
+    return {
+        left: Math.max(0, left),
+        width: Math.min(100, width)
     };
 }
 
-// Genera la timeline dei mesi
 function generateTimelineMonths() {
     const timelineDiv = document.getElementById('timelineMonths');
-    if (!timelineDiv || courses.length === 0) return;
-    
+    if (!timelineDiv) return;
+
     timelineDiv.innerHTML = '';
-    
-    // Usa ESATTAMENTE le stesse date delle barre
+    if (courses.length === 0) {
+        const header = document.getElementById('timelineHeader');
+        if (header) header.textContent = 'Timeline';
+        return;
+    }
+
     const firstCourseStart = new Date(courses[0].startDate);
     const lastCourseEnd = new Date(courses[courses.length - 1].endDate);
-    
-    // Calcola il periodo totale in giorni (stesso calcolo delle barre)
     const totalDays = (lastCourseEnd - firstCourseStart) / (1000 * 60 * 60 * 24);
-    
-    // Genera tutti i mesi nel periodo
+
     let currentMonth = new Date(firstCourseStart.getFullYear(), firstCourseStart.getMonth(), 1);
     const endMonth = new Date(lastCourseEnd.getFullYear(), lastCourseEnd.getMonth() + 1, 0);
-    
     let monthsHtml = '';
     let previousYear = null;
-    
+
     while (currentMonth <= endMonth) {
         const monthName = monthNamesFull[currentMonth.getMonth()];
         const year = currentMonth.getFullYear();
-        
-        // Calcola inizio e fine del mese
         const monthStart = new Date(Math.max(currentMonth, firstCourseStart));
         const nextMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
         const monthEnd = new Date(Math.min(nextMonth - 1, lastCourseEnd));
-        
-        // Calcola posizione e larghezza in giorni
         const offsetDays = (monthStart - firstCourseStart) / (1000 * 60 * 60 * 24);
         const monthDays = (monthEnd - monthStart) / (1000 * 60 * 60 * 24) + 1;
-        
-        // Converti in percentuali (stesso calcolo delle barre)
-        const leftPercent = (offsetDays / totalDays) * 100;
-        const widthPercent = (monthDays / totalDays) * 100;
-        
+        const denominator = totalDays || 1;
+        const leftPercent = (offsetDays / denominator) * 100;
+        const widthPercent = (monthDays / denominator) * 100;
+
         let yearLabel = '';
         if (year !== previousYear) {
             yearLabel = `<div style="font-size: 0.65em; opacity: 0.7;">${year}</div>`;
             previousYear = year;
         }
-        
+
         monthsHtml += `
             <div class="month" style="position: absolute; left: ${leftPercent}%; width: ${widthPercent}%; overflow: hidden;">
                 ${monthName}
                 ${yearLabel}
             </div>
         `;
-        
+
         currentMonth.setMonth(currentMonth.getMonth() + 1);
     }
-    
-    // Imposta il contenitore
+
     timelineDiv.style.position = 'relative';
     timelineDiv.style.height = '50px';
     timelineDiv.innerHTML = monthsHtml;
-    
-    // Aggiorna l'header
+
     const header = document.getElementById('timelineHeader');
     if (header) {
         const firstMonth = monthNamesFull[firstCourseStart.getMonth()];
@@ -159,52 +141,88 @@ function generateTimelineMonths() {
     }
 }
 
-// Aggiorna corso
 function updateCourse(courseId, field, value) {
-    const course = courses.find(c => c.id === courseId);
-    if (course) {
-        if (field === 'hours') {
-            course[field] = parseFloat(value) || 0;
-        } else {
-            course[field] = value;
-        }
-        
-        if (field === 'hours' || field === 'startDate') {
-            recalculateDates();
-        } else {
-            
-        }
-    }
-}
+    const course = courses.find(item => item.id === courseId);
+    if (!course) return;
 
-// Elimina corso
-function deleteCourse(courseId) {
-    if (confirm('Sei sicuro di voler eliminare questo corso?')) {
-        courses = courses.filter(c => c.id !== courseId);
+    if (field === 'name') {
+        const oldName = course.name;
+        const newName = String(value || '').trim();
+        if (!newName || newName === oldName) return;
+
+        course.name = newName;
+        curriculum[newName] = curriculum[oldName] || { modules: [] };
+        delete curriculum[oldName];
+    } else if (field === 'hours') {
+        const hours = parseFloat(value) || 0;
+        course.hours = hours;
+
+        const modules = curriculum[course.name]?.modules || [];
+        if (modules.length === 0) {
+            curriculum[course.name] = {
+                modules: [{ name: `${course.name} - Attività`, time: hours }]
+            };
+        } else if (modules.length === 1 && modules[0].name === `${course.name} - Attività`) {
+            modules[0].time = hours;
+        }
+    } else {
+        course[field] = value;
+    }
+
+    if (field === 'hours' || field === 'startDate') {
         recalculateDates();
+    } else {
+        renderGantt();
     }
+
+    window.FileStore?.markDirty('Modulo modificato');
 }
 
-// Aggiungi nuovo corso
+function deleteCourse(courseId) {
+    const course = courses.find(item => item.id === courseId);
+    if (!course || !confirm(`Eliminare il modulo “${course.name}”?`)) return;
+
+    courses = courses.filter(item => item.id !== courseId);
+    delete curriculum[course.name];
+
+    Object.keys(weeklySchedules).forEach(key => {
+        if (key.startsWith(`${courseId}-`)) delete weeklySchedules[key];
+    });
+    Object.keys(courseTopics).forEach(key => {
+        if (key.startsWith(`${courseId}-`)) delete courseTopics[key];
+    });
+
+    selectedCourse = null;
+    recalculateDates();
+    window.FileStore?.markDirty('Modulo eliminato');
+}
+
 function addNewCourse() {
-    const name = document.getElementById('newCourseName').value;
+    const name = document.getElementById('newCourseName').value.trim();
     const hours = parseFloat(document.getElementById('newCourseHours').value);
     const color = document.getElementById('newCourseColor').value;
-    
-    if (name && hours) {
-        const newId = Math.max(...courses.map(c => c.id), 0) + 1;
-        courses.push({
-            id: newId,
-            name: name,
-            hours: hours,
-            color: color
-        });
-        
-        recalculateDates();
-        closeAddCourseModal();
-        
-        document.getElementById('newCourseName').value = '';
-        document.getElementById('newCourseHours').value = '';
-        document.getElementById('newCourseColor').value = '#667eea';
+
+    if (!name || !Number.isFinite(hours) || hours <= 0) {
+        alert('Inserire nome e numero di ore validi.');
+        return;
     }
+
+    const newId = Math.max(...courses.map(course => course.id), 0) + 1;
+    courses.push({
+        id: newId,
+        name,
+        hours,
+        color
+    });
+    curriculum[name] = {
+        modules: [{ name: `${name} - Attività`, time: hours }]
+    };
+
+    recalculateDates();
+    closeAddCourseModal();
+
+    document.getElementById('newCourseName').value = '';
+    document.getElementById('newCourseHours').value = '';
+    document.getElementById('newCourseColor').value = '#667eea';
+    window.FileStore?.markDirty('Modulo aggiunto');
 }
