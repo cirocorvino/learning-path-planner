@@ -161,6 +161,7 @@ function renderStoreState(snapshot) {
     elements.databaseStatus.textContent = `${snapshot.dirty ? '● ' : '✓ '}${snapshot.status.message}`;
     elements.databaseStatus.dataset.level = snapshot.status.level;
     setHidden(elements.demoEyebrow, !snapshot.isDemo);
+    elements.newDatabaseButton.disabled = plannerStore.usesLocalDatabase && !snapshot.hasActiveDatabase;
     elements.saveDatabaseButton.disabled = false;
 
     renderOverview();

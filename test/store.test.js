@@ -238,6 +238,7 @@ test('in modalità file senza IndexedDB inizializzato non carica la DEMO', async
     await store.initialize();
 
     assert.equal(store.isDemo, false);
+    assert.equal(store.hasActiveDatabase, false);
     assert.equal(store.fileName, 'organizer-data.json');
     assert.equal(store.dirty, false);
     assert.match(store.status.message, /nessun database locale/i);
@@ -262,6 +263,7 @@ test('in modalità file ripristina il database attivo da IndexedDB', async t => 
     assert.equal(store.fileName, 'percorso-locale.json');
     assert.equal(store.dirty, true);
     assert.equal(store.isDemo, false);
+    assert.equal(store.hasActiveDatabase, true);
     assert.match(store.status.message, /ripristinato da indexeddb/i);
 });
 
@@ -305,12 +307,14 @@ test('Nuovo sostituisce la copia attiva e Rimuovi database locale la elimina', a
 
     store.createNew();
     await store.flushLocalPersistence();
+    assert.equal(store.hasActiveDatabase, true);
     assert.equal(cache.record.fileName, 'organizer-data.json');
     assert.notEqual(cache.record.database.metadata.id, 'example-organizer');
 
     await store.clearLocalDatabase();
     assert.equal(cache.record, null);
     assert.equal(cache.clearCount, 1);
+    assert.equal(store.hasActiveDatabase, false);
     assert.match(store.status.message, /nessun database locale/i);
 });
 

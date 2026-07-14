@@ -1313,6 +1313,7 @@
             #dirty = false;
             #fileName = 'learning-planner.json';
             #isDemo = false;
+            #hasActiveDatabase = false;
             #databaseConfiguration = emptyDatabaseConfiguration();
             #activeDatabasePath = USER_DATABASE_URL;
             #listeners = new Set();
@@ -1341,6 +1342,10 @@
                 return this.#isDemo;
             }
 
+            get hasActiveDatabase() {
+                return this.#hasActiveDatabase;
+            }
+
             get databaseConfiguration() {
                 return clone(this.#databaseConfiguration);
             }
@@ -1364,6 +1369,7 @@
                     dirty: this.#dirty,
                     fileName: this.#fileName,
                     isDemo: this.#isDemo,
+                    hasActiveDatabase: this.#hasActiveDatabase,
                     databaseConfiguration: this.databaseConfiguration,
                     status: this.status
                 };
@@ -1419,6 +1425,7 @@
                 this.#dirty = false;
                 this.#fileName = 'organizer-data.json';
                 this.#isDemo = false;
+                this.#hasActiveDatabase = false;
                 this.#databaseConfiguration = emptyDatabaseConfiguration();
                 this.#activeDatabasePath = USER_DATABASE_URL;
                 this.#warnings = [...extraWarnings];
@@ -1473,6 +1480,7 @@
             } = {}) {
                 const result = normalizeDatabase(input);
                 this.#database = result.database;
+                this.#hasActiveDatabase = true;
                 this.#warnings = [...(result.warnings || []), ...extraWarnings];
                 this.#fileName = fileName || safeFileName(result.database.metadata.name);
                 this.#isDemo = isDemo;
@@ -1568,6 +1576,7 @@
                     });
                 } catch (exampleError) {
                     this.#database = createEmptyDatabase();
+                    this.#hasActiveDatabase = true;
                     this.#dirty = true;
                     this.#fileName = 'learning-planner.json';
                     this.#isDemo = false;
@@ -1623,6 +1632,7 @@
 
             createNew() {
                 this.#database = createEmptyDatabase();
+                this.#hasActiveDatabase = true;
                 this.#dirty = true;
                 this.#fileName = 'organizer-data.json';
                 this.#isDemo = false;
@@ -1664,6 +1674,7 @@
 
             update(updater, message = 'Modifiche non salvate') {
                 this.#database = updateDatabase(this.#database, updater);
+                this.#hasActiveDatabase = true;
                 this.#dirty = true;
                 this.#warnings = this.#warnings.filter(warning =>
                     warning.startsWith(CONFIGURATION_WARNING_PREFIX)
@@ -1680,6 +1691,7 @@
             async importPlanFile(file) {
                 const payload = await readJsonFile(file);
                 this.#database = replacePlan(this.#database, payload);
+                this.#hasActiveDatabase = true;
                 this.#dirty = true;
                 this.#warnings = this.#warnings.filter(warning =>
                     warning.startsWith(CONFIGURATION_WARNING_PREFIX)
@@ -1710,6 +1722,7 @@
                 }
 
                 this.#database = snapshot;
+                this.#hasActiveDatabase = true;
                 this.#fileName = targetName;
                 this.#dirty = false;
                 this.#isDemo = false;
@@ -1888,6 +1901,7 @@
             elements.databaseStatus.textContent = `${snapshot.dirty ? '● ' : '✓ '}${snapshot.status.message}`;
             elements.databaseStatus.dataset.level = snapshot.status.level;
             setHidden(elements.demoEyebrow, !snapshot.isDemo);
+            elements.newDatabaseButton.disabled = plannerStore.usesLocalDatabase && !snapshot.hasActiveDatabase;
             elements.saveDatabaseButton.disabled = false;
 
             renderOverview();
