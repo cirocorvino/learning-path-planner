@@ -1905,7 +1905,9 @@
             elements.databaseStatus.textContent = `${snapshot.dirty ? '● ' : '✓ '}${snapshot.status.message}`;
             elements.databaseStatus.dataset.level = snapshot.status.level;
             setHidden(elements.demoEyebrow, !snapshot.isDemo);
-            elements.newDatabaseButton.disabled = !snapshot.hasActiveDatabase || !databaseHasContent(currentDatabase);
+            const newDatabaseDisabled = !snapshot.hasActiveDatabase || !databaseHasContent(currentDatabase);
+            elements.newDatabaseButton.disabled = newDatabaseDisabled;
+            elements.newDatabaseButton.title = newDatabaseDisabled ? 'Il database è già vuoto' : '';
             elements.saveDatabaseButton.disabled = false;
 
             renderOverview();

@@ -13,6 +13,7 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     assert.doesNotMatch(bundle, /Planner dimostrativo/);
     assert.match(
         bundle,
-        /newDatabaseButton\.disabled = !snapshot\.hasActiveDatabase \|\| !databaseHasContent\(currentDatabase\)/
+        /const newDatabaseDisabled = !snapshot\.hasActiveDatabase \|\| !databaseHasContent\(currentDatabase\)/
     );
+    assert.match(bundle, /newDatabaseButton\.title = newDatabaseDisabled \? 'Il database è già vuoto' : ''/);
 });
