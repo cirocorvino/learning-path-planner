@@ -16,7 +16,7 @@ Chiudendo o ricaricando la pagina con modifiche pendenti, il browser chiede conf
 
 All'avvio via HTTP l'app cerca prima `data/user/db-configuration.json`. Se la proprietà `defaultDatabase` indica un file valido, quel database viene caricato con la priorità più alta. Seguono `data/user/organizer-data.json` e l'esempio fittizio `data/examples/organizer-example.json`.
 
-Aprendo direttamente `index.html` (`file://`), l'app ripristina il database attivo da IndexedDB. Se non esiste una copia locale, mostra un planner vuoto, non carica la DEMO e lascia **Nuovo** disabilitato. Il pulsante **Apri database** importa il JSON selezionato in IndexedDB; quando esiste un database attivo, **Nuovo** si abilita e, dopo una conferma esplicita, lo sostituisce con un database vuoto.
+Aprendo direttamente `index.html` (`file://`), l'app ripristina il database attivo da IndexedDB. Se non esiste una copia locale, mostra un planner vuoto e non carica la DEMO. Il pulsante **Apri database** importa il JSON selezionato in IndexedDB. **Nuovo** resta disabilitato quando il piano non contiene moduli; quando il database contiene dati, si abilita e, dopo una conferma esplicita, lo sostituisce con un database vuoto.
 
 Una configurazione mancante o vuota attiva i fallback in modo trasparente. Se il file non è utilizzabile, contiene un percorso non valido oppure indica un database che non può essere caricato, l'app mostra un avviso non bloccante e apre immediatamente il fallback successivo.
 

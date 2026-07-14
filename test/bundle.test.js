@@ -11,4 +11,8 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     assert.doesNotMatch(bundle, /embeddedExampleDatabase/);
     assert.doesNotMatch(bundle, /example-organizer/);
     assert.doesNotMatch(bundle, /Planner dimostrativo/);
+    assert.match(
+        bundle,
+        /newDatabaseButton\.disabled = !snapshot\.hasActiveDatabase \|\| !databaseHasContent\(currentDatabase\)/
+    );
 });

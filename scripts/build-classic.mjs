@@ -21,6 +21,7 @@ const modules = [
             'createId',
             'createEmptyWeekTemplate',
             'createEmptyDatabase',
+            'databaseHasContent',
             'normalizeDatabase',
             'normalizePlanInput',
             'updateDatabase',
@@ -101,7 +102,7 @@ const modules = [
         name: null,
         file: 'js/app.js',
         prelude: [
-            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId } = modelApi;',
+            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId, databaseHasContent } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'

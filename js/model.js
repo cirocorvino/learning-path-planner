@@ -102,6 +102,10 @@ export function createEmptyDatabase() {
     };
 }
 
+export function databaseHasContent(database) {
+    return Array.isArray(database?.plan?.modules) && database.plan.modules.length > 0;
+}
+
 function requireObject(value, path) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(`${path} deve essere un oggetto.`);

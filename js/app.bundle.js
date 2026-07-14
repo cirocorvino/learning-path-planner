@@ -107,6 +107,10 @@
             };
         }
 
+        function databaseHasContent(database) {
+            return Array.isArray(database?.plan?.modules) && database.plan.modules.length > 0;
+        }
+
         function requireObject(value, path) {
             if (!value || typeof value !== 'object' || Array.isArray(value)) {
                 throw new Error(`${path} deve essere un oggetto.`);
@@ -639,7 +643,7 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
@@ -1753,7 +1757,7 @@
     })();
 
     (() => {
-        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId } = modelApi;
+        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId, databaseHasContent } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
@@ -1901,7 +1905,7 @@
             elements.databaseStatus.textContent = `${snapshot.dirty ? '● ' : '✓ '}${snapshot.status.message}`;
             elements.databaseStatus.dataset.level = snapshot.status.level;
             setHidden(elements.demoEyebrow, !snapshot.isDemo);
-            elements.newDatabaseButton.disabled = plannerStore.usesLocalDatabase && !snapshot.hasActiveDatabase;
+            elements.newDatabaseButton.disabled = !snapshot.hasActiveDatabase || !databaseHasContent(currentDatabase);
             elements.saveDatabaseButton.disabled = false;
 
             renderOverview();

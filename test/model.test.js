@@ -5,6 +5,8 @@ import test from 'node:test';
 import {
     DATABASE_KIND,
     PLAN_KIND,
+    createEmptyDatabase,
+    databaseHasContent,
     normalizeDatabase,
     normalizePlanInput,
     updateDatabase
@@ -12,6 +14,11 @@ import {
 
 const exampleUrl = new URL('../data/examples/organizer-example.json', import.meta.url);
 const example = JSON.parse(await readFile(exampleUrl, 'utf8'));
+
+test('considera vuoto un database senza moduli', () => {
+    assert.equal(databaseHasContent(createEmptyDatabase()), false);
+    assert.equal(databaseHasContent(example), true);
+});
 
 test('normalizza il database dimostrativo v2', () => {
     const result = normalizeDatabase(example);

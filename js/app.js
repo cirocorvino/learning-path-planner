@@ -3,7 +3,8 @@ import {
     DAY_KEYS,
     MODULE_MODES,
     TOPIC_KINDS,
-    createId
+    createId,
+    databaseHasContent
 } from './model.js';
 import {
     buildPlanSchedule,
@@ -161,7 +162,7 @@ function renderStoreState(snapshot) {
     elements.databaseStatus.textContent = `${snapshot.dirty ? '● ' : '✓ '}${snapshot.status.message}`;
     elements.databaseStatus.dataset.level = snapshot.status.level;
     setHidden(elements.demoEyebrow, !snapshot.isDemo);
-    elements.newDatabaseButton.disabled = plannerStore.usesLocalDatabase && !snapshot.hasActiveDatabase;
+    elements.newDatabaseButton.disabled = !snapshot.hasActiveDatabase || !databaseHasContent(currentDatabase);
     elements.saveDatabaseButton.disabled = false;
 
     renderOverview();
