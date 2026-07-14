@@ -13,8 +13,8 @@ Il piano viene mostrato su un diagramma di Gantt e, per ogni settimana, come age
 - target settimanale e date eccezionali che riducono la capacità reale;
 - Gantt calcolato sulla disponibilità effettiva e dettaglio di ogni settimana;
 - apertura e salvataggio locale, con fallback tramite download JSON;
-- importazione di piani v2 e migrazione automatica dei precedenti file organizer v1;
-- caricamento automatico del database locale convenzionale, con fallback sull'esempio fittizio.
+- importazione di piani;
+- caricamento manuale e automatico del database locale convenzionale (con fallback sull'esempio fittizio).
 
 ## Avvio locale
 
