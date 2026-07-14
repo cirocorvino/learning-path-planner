@@ -18,7 +18,7 @@ Il piano viene mostrato su un diagramma di Gantt e, per ogni settimana, come age
 
 ## Avvio locale
 
-Per usare l'app senza server, aprire direttamente `index.html` con il browser. In modalità `file://` l'interfaccia parte con l'esempio dimostrativo incorporato; usare **Apri database** per scegliere il proprio file JSON. Tutte le funzioni di modifica e salvataggio restano disponibili.
+Per usare l'app senza server, aprire direttamente `index.html` con il browser. In modalità `file://` la copia di lavoro viene conservata automaticamente in IndexedDB. Al primo avvio non viene caricata alcuna DEMO: usare **Apri database** per importare un JSON oppure **Nuovo** per iniziare da un database vuoto.
 
 I browser non consentono a una pagina `file://` di leggere automaticamente altri file dal disco. Per applicare automaticamente la catena `db-configuration.json` → `organizer-data.json` → esempio, avviare facoltativamente un server statico:
 
@@ -34,7 +34,7 @@ php -S localhost:3001
 
 Aprire `http://localhost:3001`. Non sono necessarie dipendenze runtime.
 
-Il bundle classico `js/app.bundle.js` è già incluso. Chi modifica i sorgenti in `js/` o l'esempio deve rigenerarlo con:
+Il bundle classico `js/app.bundle.js` è già incluso e non incorpora dati dimostrativi. Chi modifica i sorgenti in `js/` deve rigenerarlo con:
 
 ```bash
 npm run build
@@ -51,7 +51,7 @@ npm test
 1. Aprire **Impostazioni** per definire categorie, disponibilità ricorrenti, target ed eccezioni.
 2. Aprire **Moduli e argomenti** per comporre il percorso e ordinare le attività.
 3. Consultare il Gantt; selezionare un modulo per vedere la distribuzione settimanale.
-4. Usare **Salva** per scaricare il database corrente e, quando serve, la relativa configurazione; sarà poi responsabilità dell'utente collocare i file nei percorsi indicati.
+4. Usare **Salva** per esportare il database corrente come JSON. Via HTTP può essere scaricata anche la relativa configurazione.
 5. Usare **Importa programma** per sostituire soltanto il percorso, conservando disponibilità e categorie.
 
 Quando è aperta via HTTP, all'avvio l'app applica questo ordine di priorità:
@@ -62,9 +62,9 @@ Quando è aperta via HTTP, all'avvio l'app applica questo ordine di priorità:
 
 Se la configurazione manca o è vuota, l'app passa ai fallback in modo trasparente. Un percorso non valido, una configurazione non utilizzabile o un database esplicitamente indicato ma non caricabile producono invece un avviso non bloccante, seguito immediatamente dal fallback. In **Impostazioni** è possibile specificare un percorso relativo, per esempio `data/user/corso-dotnet.json`, oppure lasciare il campo vuoto per usare il database convenzionale.
 
-In modalità `file://` questi tentativi automatici vengono evitati perché il browser li bloccherebbe: viene caricato l'esempio incorporato e il database personale si seleziona con **Apri database**.
+In modalità `file://` questi tentativi automatici vengono evitati perché il browser li bloccherebbe. L'app cerca esclusivamente la copia IndexedDB associata a `index.html`; se manca, mostra un planner vuoto senza attivare la DEMO. **Apri database**, **Nuovo**, **Applica impostazioni** e **Aggiorna il piano** aggiornano automaticamente IndexedDB.
 
-**Applica impostazioni** aggiorna soltanto lo stato in memoria. **Salva** scarica `organizer-data.json` quando è attivo il fallback convenzionale; per un percorso personalizzato scarica invece sia il database sia `db-configuration.json`. L'app non richiede autorizzazioni di scrittura al browser e non usa `localStorage`.
+In `file://`, **Salva** serve soltanto a esportare un backup JSON e non è necessario per conservare le modifiche nel browser. Via HTTP scarica `organizer-data.json` quando è attivo il fallback convenzionale; per un percorso personalizzato scarica invece sia il database sia `db-configuration.json`. L'app non usa `localStorage`.
 
 ## Interfaccia
 
@@ -79,6 +79,7 @@ index.html                 interfaccia e dialog di modifica
 Style/                     foglio di stile, manifest e icona
 js/model.js                schema, validazione e migrazione v1
 js/db-configuration.js     schema e validazione della configurazione predefinita
+js/local-database.js       persistenza della copia di lavoro in IndexedDB
 js/planner.js              capacità, Gantt e agenda settimanale
 js/store.js                stato e I/O locale dei file JSON
 js/app.js                  rendering e interazioni UI

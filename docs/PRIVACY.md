@@ -1,6 +1,6 @@
 # Privacy e pubblicazione
 
-Un database può rivelare nomi, impegni, orari, assenze e programmi personali. L'app carica il percorso relativo indicato in `data/user/db-configuration.json`; in assenza di un valore usa `data/user/organizer-data.json` e infine un esempio fittizio. Nessun percorso remoto o esterno alla root del progetto è accettato.
+Un database può rivelare nomi, impegni, orari, assenze e programmi personali. Via HTTP l'app carica il percorso relativo indicato in `data/user/db-configuration.json`, seguito dai fallback convenzionali. Via `file://` conserva invece la copia di lavoro nel profilo del browser tramite IndexedDB.
 
 ## Regole del repository
 
@@ -10,6 +10,8 @@ Un database può rivelare nomi, impegni, orari, assenze e programmi personali. L
 - `data/private/` contiene note o materiale di supporto locale ed è ignorata da Git.
 - esportazioni, backup, file `.env` e varianti `*.personal.json`, `*.private.json`, `*.local.json` e `*.secret.json` sono ignorati.
 - nessun dato importato viene inviato in rete dal codice dell'app.
+- la copia IndexedDB resta associata al browser, al profilo e all'origine locale; può essere rimossa dalle Impostazioni dell'app o cancellando i dati del browser.
+- il JSON esportato con **Salva** resta il backup portabile consigliato: IndexedDB non sostituisce una strategia di backup.
 
 ## Prima di rendere pubblico un repository esistente
 

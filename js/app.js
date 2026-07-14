@@ -51,9 +51,12 @@ const elements = Object.fromEntries([
     'weeklyTargetInput',
     'localeInput',
     'timeZoneInput',
+    'databaseStorageTitle',
+    'databaseStorageDescription',
     'defaultDatabasePathLabel',
     'defaultDatabasePathInput',
     'defaultDatabasePathHint',
+    'clearLocalDatabaseButton',
     'multiplierEditor',
     'categoryEditor',
     'addCategoryButton',
@@ -433,9 +436,14 @@ function openSettingsDialog() {
     elements.defaultDatabasePathInput.value = currentDatabaseConfiguration?.defaultDatabase || '';
     elements.defaultDatabasePathInput.disabled = isDirectFileMode;
     elements.defaultDatabasePathLabel.classList.toggle('field-disabled', isDirectFileMode);
+    elements.databaseStorageTitle.textContent = isDirectFileMode ? 'Database locale' : 'Database predefinito';
+    elements.databaseStorageDescription.textContent = isDirectFileMode
+        ? 'La copia di lavoro viene salvata automaticamente in IndexedDB.'
+        : 'Indica il percorso relativo da scrivere in db-configuration.json.';
     elements.defaultDatabasePathHint.textContent = isDirectFileMode
-        ? 'In modalità file locale il browser non può collegare automaticamente questo percorso. Usa Apri database per scegliere il JSON.'
+        ? 'Apri database importa un JSON nella copia locale. Salva esporta un backup JSON, ma non è necessario per conservare le modifiche nel browser.'
         : 'Lascia vuoto per usare il fallback convenzionale data/user/organizer-data.json. Il file di configurazione viene scaricato soltanto premendo Salva.';
+    setHidden(elements.clearLocalDatabaseButton, !isDirectFileMode);
     elements.exceptionsInput.value = settingsDraft.settings.calendarExceptions
         .map(exception => `${exception.date} | ${exception.label}`)
         .join('\n');
@@ -821,6 +829,16 @@ function bindEvents() {
     elements.settingsForm.addEventListener('submit', applySettings);
     elements.planForm.addEventListener('submit', applyPlan);
 
+    elements.clearLocalDatabaseButton.addEventListener('click', async () => {
+        if (!window.confirm('Rimuovere il database locale? Esporta prima un JSON se vuoi conservarne una copia.')) return;
+        try {
+            await plannerStore.clearLocalDatabase();
+            elements.settingsDialog.close();
+        } catch (error) {
+            showFormError(elements.settingsError, error);
+        }
+    });
+
     elements.addCategoryButton.addEventListener('click', () => {
         settingsDraft.categories.push({
             id: `category-${settingsDraft.categories.length + 1}`,
@@ -851,7 +869,7 @@ function bindEvents() {
     });
 
     window.addEventListener('beforeunload', event => {
-        if (!plannerStore.dirty) return;
+        if (!plannerStore.dirty || plannerStore.usesLocalDatabase) return;
         event.preventDefault();
         event.returnValue = '';
     });

@@ -16,7 +16,7 @@ Chiudendo o ricaricando la pagina con modifiche pendenti, il browser chiede conf
 
 All'avvio via HTTP l'app cerca prima `data/user/db-configuration.json`. Se la proprietà `defaultDatabase` indica un file valido, quel database viene caricato con la priorità più alta. Seguono `data/user/organizer-data.json` e l'esempio fittizio `data/examples/organizer-example.json`.
 
-Aprendo direttamente `index.html` (`file://`), l'app usa l'esempio incorporato nel bundle perché il browser non autorizza la lettura automatica dei JSON adiacenti. Il pulsante **Apri database** consente di scegliere il proprio JSON e lavorare normalmente senza avviare un server.
+Aprendo direttamente `index.html` (`file://`), l'app ripristina il database attivo da IndexedDB. Se non esiste una copia locale, mostra un planner vuoto e non carica la DEMO. Il pulsante **Apri database** importa il JSON selezionato in IndexedDB; **Nuovo** sostituisce la copia attiva con un database vuoto.
 
 Una configurazione mancante o vuota attiva i fallback in modo trasparente. Se il file non è utilizzabile, contiene un percorso non valido oppure indica un database che non può essere caricato, l'app mostra un avviso non bloccante e apre immediatamente il fallback successivo.
 
@@ -36,13 +36,13 @@ Apre un database completo e sostituisce l'intero stato corrente:
 - impostazioni di stima;
 - programma, moduli, argomenti e progresso.
 
-I database organizer v1 vengono migrati in memoria al formato v2. Il file originale non viene modificato finché non si preme **Salva**.
+I database organizer v1 vengono migrati in memoria al formato v2. In `file://` il risultato normalizzato viene conservato in IndexedDB; il file originale non viene modificato.
 
 ### Salva
 
 Serializza l'intero database corrente in formato JSON v2 e lo scarica senza richiedere autorizzazioni di scrittura al filesystem.
 
-Se è attivo il percorso convenzionale, viene scaricato soltanto `organizer-data.json`, da copiare in `data/user`. Se è configurato un percorso personalizzato, vengono scaricati il database con il nome indicato e `db-configuration.json`; l'utente deve collocarli rispettivamente nel percorso configurato e in `data/user`.
+In modalità `file://`, esporta soltanto il database JSON: la conservazione quotidiana è già garantita dall'autosalvataggio IndexedDB. Via HTTP, se è attivo il percorso convenzionale viene scaricato soltanto `organizer-data.json`; con un percorso personalizzato vengono scaricati il database e `db-configuration.json`.
 
 Dopo **Importa programma**, il salvataggio registra il programma importato all'interno del database corrente.
 
@@ -68,7 +68,7 @@ Apre l'editor del database e della disponibilità. Da qui si modificano:
 - attività ricorrenti e slot disponibili per ogni giorno;
 - eccezioni del calendario.
 
-La sezione **Database predefinito** contiene un solo percorso relativo, per esempio `data/user/corso-dotnet.json`. **Applica impostazioni** aggiorna lo stato in memoria insieme agli altri parametri: non scrive file e non usa `localStorage`. Un percorso non valido non blocca le altre impostazioni, ripristina il fallback convenzionale e genera un avviso nella pagina. In modalità `file://` il campo è disabilitato e il database si sceglie con **Apri database**.
+Via HTTP, la sezione **Database predefinito** contiene un solo percorso relativo, per esempio `data/user/corso-dotnet.json`. Un percorso non valido non blocca le altre impostazioni, ripristina il fallback convenzionale e genera un avviso nella pagina. In modalità `file://` il campo è disabilitato, **Applica impostazioni** aggiorna automaticamente IndexedDB e **Rimuovi database locale** elimina la copia attiva dopo una conferma.
 
 Il successivo **Salva** scarica database e configurazione. Svuotando il campo si ripristina `data/user/organizer-data.json`: in questo caso viene scaricato soltanto il database convenzionale e non viene generato `db-configuration.json`.
 

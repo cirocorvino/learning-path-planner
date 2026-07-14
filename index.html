@@ -129,14 +129,15 @@
             <section class="editor-section">
                 <div class="editor-section__heading">
                     <div>
-                        <h3>Database predefinito</h3>
-                        <p>Indica il percorso relativo da scrivere in <code>db-configuration.json</code>.</p>
+                        <h3 id="databaseStorageTitle">Database predefinito</h3>
+                        <p id="databaseStorageDescription">Indica il percorso relativo da scrivere in <code>db-configuration.json</code>.</p>
                     </div>
                 </div>
                 <label id="defaultDatabasePathLabel">Percorso database
                     <input id="defaultDatabasePathInput" placeholder="data/user/percorso-personale.json" autocomplete="off">
                 </label>
                 <p id="defaultDatabasePathHint" class="muted settings-hint">Lascia vuoto per usare il fallback convenzionale <code>data/user/organizer-data.json</code>. Il file di configurazione viene scaricato soltanto premendo <strong>Salva</strong>.</p>
+                <button id="clearLocalDatabaseButton" class="button button--small button--danger hidden" type="button">Rimuovi database locale</button>
             </section>
 
             <section class="editor-section">

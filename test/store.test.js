@@ -3,10 +3,49 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createDatabaseConfiguration, emptyDatabaseConfiguration } from '../js/db-configuration.js';
+import { createLocalDatabaseRecord } from '../js/local-database.js';
 import { PlannerStore } from '../js/store.js';
 
 const exampleUrl = new URL('../data/examples/organizer-example.json', import.meta.url);
 const example = JSON.parse(await readFile(exampleUrl, 'utf8'));
+
+function clone(value) {
+    return value === null || value === undefined ? value : structuredClone(value);
+}
+
+class MemoryLocalDatabaseCache {
+    constructor(record = null) {
+        this.record = clone(record);
+        this.saveCount = 0;
+        this.clearCount = 0;
+    }
+
+    async load() {
+        return clone(this.record);
+    }
+
+    async save(record) {
+        this.record = clone(record);
+        this.saveCount += 1;
+    }
+
+    async clear() {
+        this.record = null;
+        this.clearCount += 1;
+    }
+}
+
+function useFileMode(t) {
+    const originalFetch = globalThis.fetch;
+    const originalLocation = globalThis.location;
+    t.after(() => {
+        globalThis.fetch = originalFetch;
+        if (originalLocation === undefined) delete globalThis.location;
+        else globalThis.location = originalLocation;
+    });
+    globalThis.location = { protocol: 'file:' };
+    globalThis.fetch = async () => assert.fail('fetch non deve essere invocato in modalità file');
+}
 
 function jsonResponse(payload) {
     return {
@@ -192,31 +231,87 @@ test('una configurazione vuota usa i fallback senza errore di configurazione', a
     assert.deepEqual(store.status.warnings, []);
 });
 
-test('in modalità file usa l\'esempio incorporato senza tentare richieste HTTP', async t => {
-    const originalFetch = globalThis.fetch;
-    const originalLocation = globalThis.location;
-    const originalRuntime = globalThis.LearningPlannerRuntime;
-    t.after(() => {
-        globalThis.fetch = originalFetch;
-        if (originalLocation === undefined) delete globalThis.location;
-        else globalThis.location = originalLocation;
-        if (originalRuntime === undefined) delete globalThis.LearningPlannerRuntime;
-        else globalThis.LearningPlannerRuntime = originalRuntime;
-    });
-
-    globalThis.location = { protocol: 'file:' };
-    globalThis.LearningPlannerRuntime = { embeddedExampleDatabase: example };
-    globalThis.fetch = async () => {
-        assert.fail('fetch non deve essere invocato in modalità file');
-    };
-
-    const store = new PlannerStore();
+test('in modalità file senza IndexedDB inizializzato non carica la DEMO', async t => {
+    useFileMode(t);
+    const cache = new MemoryLocalDatabaseCache();
+    const store = new PlannerStore({ localDatabaseCache: cache });
     await store.initialize();
 
-    assert.equal(store.isDemo, true);
-    assert.equal(store.fileName, 'learning-planner-example.json');
-    assert.match(store.status.message, /modalità locale/i);
+    assert.equal(store.isDemo, false);
+    assert.equal(store.fileName, 'organizer-data.json');
+    assert.equal(store.dirty, false);
+    assert.match(store.status.message, /nessun database locale/i);
     assert.deepEqual(store.status.warnings, []);
+    assert.equal(cache.saveCount, 0);
+});
+
+test('in modalità file ripristina il database attivo da IndexedDB', async t => {
+    useFileMode(t);
+    const cache = new MemoryLocalDatabaseCache(createLocalDatabaseRecord({
+        database: example,
+        fileName: 'percorso-locale.json',
+        dirty: true,
+        activeDatabasePath: 'data/user/percorso-locale.json',
+        databaseConfiguration: createDatabaseConfiguration('data/user/percorso-locale.json')
+    }));
+
+    const store = new PlannerStore({ localDatabaseCache: cache });
+    await store.initialize();
+
+    assert.equal(store.database.metadata.id, 'example-organizer');
+    assert.equal(store.fileName, 'percorso-locale.json');
+    assert.equal(store.dirty, true);
+    assert.equal(store.isDemo, false);
+    assert.match(store.status.message, /ripristinato da indexeddb/i);
+});
+
+test('apertura e modifiche aggiornano automaticamente IndexedDB', async t => {
+    useFileMode(t);
+    const cache = new MemoryLocalDatabaseCache();
+    const store = new PlannerStore({ localDatabaseCache: cache });
+    await store.initialize();
+
+    await store.loadDatabaseFile({
+        name: 'corso-personale.json',
+        async text() { return JSON.stringify(example); }
+    });
+    assert.equal(cache.record.fileName, 'corso-personale.json');
+    assert.equal(cache.record.dirty, false);
+
+    store.update(database => {
+        database.metadata.description = 'Modifica persistita automaticamente';
+    });
+    await store.flushLocalPersistence();
+
+    assert.equal(cache.record.database.metadata.description, 'Modifica persistita automaticamente');
+    assert.equal(cache.record.dirty, true);
+
+    const restored = new PlannerStore({ localDatabaseCache: cache });
+    await restored.initialize();
+    assert.equal(restored.database.metadata.description, 'Modifica persistita automaticamente');
+});
+
+test('Nuovo sostituisce la copia attiva e Rimuovi database locale la elimina', async t => {
+    useFileMode(t);
+    const cache = new MemoryLocalDatabaseCache(createLocalDatabaseRecord({
+        database: example,
+        fileName: 'precedente.json',
+        dirty: false,
+        activeDatabasePath: 'data/user/precedente.json',
+        databaseConfiguration: createDatabaseConfiguration('data/user/precedente.json')
+    }));
+    const store = new PlannerStore({ localDatabaseCache: cache });
+    await store.initialize();
+
+    store.createNew();
+    await store.flushLocalPersistence();
+    assert.equal(cache.record.fileName, 'organizer-data.json');
+    assert.notEqual(cache.record.database.metadata.id, 'example-organizer');
+
+    await store.clearLocalDatabase();
+    assert.equal(cache.record, null);
+    assert.equal(cache.clearCount, 1);
+    assert.match(store.status.message, /nessun database locale/i);
 });
 
 test('un percorso non valido applicato dalle impostazioni attiva un fallback non bloccante', async t => {
@@ -276,4 +371,23 @@ test('Salva scarica database e configurazione soltanto per un percorso personali
     assert.deepEqual(downloads.map(download => download.fileName), ['organizer-data.json']);
     assert.equal(store.databaseConfiguration.defaultDatabase, undefined);
     assert.deepEqual(store.databaseConfiguration, emptyDatabaseConfiguration());
+});
+
+test('in modalità file Salva esporta soltanto il JSON e aggiorna IndexedDB', async t => {
+    useFileMode(t);
+    const downloads = recordDownloads(t);
+    const cache = new MemoryLocalDatabaseCache();
+    const store = new PlannerStore({ localDatabaseCache: cache });
+    await store.initialize();
+    await store.loadDatabaseFile({
+        name: 'database-locale.json',
+        async text() { return JSON.stringify(example); }
+    });
+
+    store.update(database => { database.metadata.description = 'Da esportare'; });
+    await store.save();
+
+    assert.deepEqual(downloads.map(download => download.fileName), ['database-locale.json']);
+    assert.equal(cache.record.dirty, false);
+    assert.equal(cache.record.database.metadata.description, 'Da esportare');
 });

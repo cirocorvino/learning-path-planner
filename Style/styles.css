@@ -569,6 +569,10 @@ code {
     font-size: 0.82rem;
 }
 
+#clearLocalDatabaseButton {
+    margin-top: 0.8rem;
+}
+
 label {
     display: grid;
     gap: 0.35rem;

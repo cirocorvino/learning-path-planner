@@ -15,10 +15,17 @@ import {
     emptyDatabaseConfiguration,
     normalizeDatabaseConfiguration
 } from './db-configuration.js';
+import {
+    IndexedDbDatabaseCache,
+    createLocalDatabaseRecord,
+    isDirectFileMode,
+    normalizeLocalDatabaseRecord
+} from './local-database.js';
 
 const USER_DATABASE_URL = DEFAULT_DATABASE_PATH;
 const EXAMPLE_DATABASE_URL = 'data/examples/organizer-example.json';
 const CONFIGURATION_WARNING_PREFIX = 'Configurazione database:';
+const LOCAL_DATABASE_WARNING_PREFIX = 'Archivio locale:';
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -55,10 +62,6 @@ async function readJsonFile(file) {
 
 async function fetchJson(url) {
     if (globalThis.location?.protocol === 'file:') {
-        if (url === EXAMPLE_DATABASE_URL && globalThis.LearningPlannerRuntime?.embeddedExampleDatabase) {
-            return clone(globalThis.LearningPlannerRuntime.embeddedExampleDatabase);
-        }
-
         const error = new Error('lettura automatica non consentita in modalità file locale');
         error.status = 404;
         throw error;
@@ -88,6 +91,12 @@ export class PlannerStore {
     #listeners = new Set();
     #status = { message: 'Inizializzazione…', level: 'info' };
     #warnings = [];
+    #localDatabaseCache;
+    #localPersistenceQueue = Promise.resolve();
+
+    constructor({ localDatabaseCache } = {}) {
+        this.#localDatabaseCache = localDatabaseCache || new IndexedDbDatabaseCache();
+    }
 
     get database() {
         return this.#database ? clone(this.#database) : null;
@@ -107,6 +116,10 @@ export class PlannerStore {
 
     get databaseConfiguration() {
         return clone(this.#databaseConfiguration);
+    }
+
+    get usesLocalDatabase() {
+        return isDirectFileMode();
     }
 
     get status() {
@@ -132,6 +145,93 @@ export class PlannerStore {
 
     #setStatus(message, level = 'info') {
         this.#status = { message, level };
+    }
+
+    #removeLocalDatabaseWarnings() {
+        this.#warnings = this.#warnings.filter(warning => !warning.startsWith(LOCAL_DATABASE_WARNING_PREFIX));
+    }
+
+    #handleLocalDatabaseError(error) {
+        this.#removeLocalDatabaseWarnings();
+        this.#warnings.push(`${LOCAL_DATABASE_WARNING_PREFIX} ${error.message || String(error)}`);
+        this.#setStatus('Copia locale non aggiornata; esporta un JSON per non perdere le modifiche', 'warning');
+        this.#emit();
+    }
+
+    #localDatabaseRecord() {
+        return createLocalDatabaseRecord({
+            database: this.#database,
+            fileName: this.#fileName,
+            dirty: this.#dirty,
+            activeDatabasePath: this.#activeDatabasePath,
+            databaseConfiguration: this.#databaseConfiguration
+        });
+    }
+
+    #queueLocalPersistence() {
+        if (!this.usesLocalDatabase || !this.#database) return Promise.resolve();
+        const record = this.#localDatabaseRecord();
+        this.#localPersistenceQueue = this.#localPersistenceQueue
+            .catch(() => undefined)
+            .then(() => this.#localDatabaseCache.save(record))
+            .then(() => {
+                const hadWarnings = this.#warnings.some(warning => warning.startsWith(LOCAL_DATABASE_WARNING_PREFIX));
+                this.#removeLocalDatabaseWarnings();
+                if (hadWarnings) this.#emit();
+            })
+            .catch(error => this.#handleLocalDatabaseError(error));
+        return this.#localPersistenceQueue;
+    }
+
+    async flushLocalPersistence() {
+        await this.#localPersistenceQueue;
+    }
+
+    #useEmptyLocalDatabase(extraWarnings = []) {
+        this.#database = createEmptyDatabase();
+        this.#dirty = false;
+        this.#fileName = 'organizer-data.json';
+        this.#isDemo = false;
+        this.#databaseConfiguration = emptyDatabaseConfiguration();
+        this.#activeDatabasePath = USER_DATABASE_URL;
+        this.#warnings = [...extraWarnings];
+        this.#setStatus('Nessun database locale: usa Apri database o Nuovo', extraWarnings.length ? 'warning' : 'info');
+        this.#emit();
+    }
+
+    async #initializeLocalDatabase() {
+        try {
+            const record = normalizeLocalDatabaseRecord(await this.#localDatabaseCache.load());
+            if (!record) {
+                this.#useEmptyLocalDatabase();
+                return;
+            }
+
+            const startupWarnings = [];
+            let databaseConfiguration = emptyDatabaseConfiguration();
+            try {
+                databaseConfiguration = normalizeDatabaseConfiguration(
+                    record.databaseConfiguration || emptyDatabaseConfiguration()
+                );
+            } catch (error) {
+                startupWarnings.push(`${LOCAL_DATABASE_WARNING_PREFIX} configurazione ignorata (${error.message})`);
+            }
+
+            const activeDatabasePath = databaseConfiguration.defaultDatabase || USER_DATABASE_URL;
+            const result = this.#apply(record.database, {
+                fileName: record.fileName,
+                dirty: record.dirty,
+                message: 'Database locale ripristinato da IndexedDB',
+                level: startupWarnings.length ? 'warning' : (record.dirty ? 'warning' : 'success'),
+                isDemo: false,
+                extraWarnings: startupWarnings,
+                activeDatabasePath,
+                databaseConfiguration
+            });
+            if (result.migrated) await this.#queueLocalPersistence();
+        } catch (error) {
+            this.#useEmptyLocalDatabase([`${LOCAL_DATABASE_WARNING_PREFIX} ${error.message || String(error)}`]);
+        }
     }
 
     #apply(input, {
@@ -163,6 +263,11 @@ export class PlannerStore {
     }
 
     async initialize() {
+        if (this.usesLocalDatabase) {
+            await this.#initializeLocalDatabase();
+            return;
+        }
+
         const startupWarnings = [];
         let configurationPayload = null;
 
@@ -226,12 +331,9 @@ export class PlannerStore {
 
         try {
             const payload = await fetchJson(EXAMPLE_DATABASE_URL);
-            const isDirectFileMode = globalThis.location?.protocol === 'file:';
             this.#apply(payload, {
                 fileName: 'learning-planner-example.json',
-                message: isDirectFileMode
-                    ? 'Modalità locale: esempio caricato; usa Apri database per scegliere il tuo JSON'
-                    : 'Nessun database utente: esempio generico caricato',
+                message: 'Nessun database utente: esempio generico caricato',
                 level: startupWarnings.length === 0 ? 'success' : 'warning',
                 isDemo: true,
                 extraWarnings: startupWarnings,
@@ -272,6 +374,7 @@ export class PlannerStore {
             'warning'
         );
         this.#emit();
+        void this.#queueLocalPersistence();
     }
 
     useConventionalDatabaseFallback(reason) {
@@ -288,6 +391,7 @@ export class PlannerStore {
             'warning'
         );
         this.#emit();
+        void this.#queueLocalPersistence();
     }
 
     createNew() {
@@ -298,8 +402,14 @@ export class PlannerStore {
         this.#databaseConfiguration = emptyDatabaseConfiguration();
         this.#activeDatabasePath = USER_DATABASE_URL;
         this.#warnings = [];
-        this.#setStatus('Nuovo database non ancora salvato', 'warning');
+        this.#setStatus(
+            this.usesLocalDatabase
+                ? 'Nuovo database conservato localmente; premi Salva per esportare il JSON'
+                : 'Nuovo database non ancora salvato',
+            'warning'
+        );
         this.#emit();
+        void this.#queueLocalPersistence();
     }
 
     openDatabase(fileInput) {
@@ -316,26 +426,46 @@ export class PlannerStore {
             : createDatabaseConfiguration(activeDatabasePath);
         this.#apply(payload, {
             fileName: file.name,
+            message: this.usesLocalDatabase
+                ? `Aperto ${file.name} e impostato come database locale`
+                : undefined,
             activeDatabasePath,
             databaseConfiguration
         });
+        await this.#queueLocalPersistence();
     }
 
     update(updater, message = 'Modifiche non salvate') {
         this.#database = updateDatabase(this.#database, updater);
         this.#dirty = true;
-        this.#warnings = this.#warnings.filter(warning => warning.startsWith(CONFIGURATION_WARNING_PREFIX));
-        this.#setStatus(message, 'warning');
+        this.#warnings = this.#warnings.filter(warning =>
+            warning.startsWith(CONFIGURATION_WARNING_PREFIX)
+            || warning.startsWith(LOCAL_DATABASE_WARNING_PREFIX)
+        );
+        this.#setStatus(
+            this.usesLocalDatabase ? `${message}; copia locale aggiornata automaticamente` : message,
+            'warning'
+        );
         this.#emit();
+        void this.#queueLocalPersistence();
     }
 
     async importPlanFile(file) {
         const payload = await readJsonFile(file);
         this.#database = replacePlan(this.#database, payload);
         this.#dirty = true;
-        this.#warnings = this.#warnings.filter(warning => warning.startsWith(CONFIGURATION_WARNING_PREFIX));
-        this.#setStatus(`Programma importato da ${file.name}: salva il database`, 'warning');
+        this.#warnings = this.#warnings.filter(warning =>
+            warning.startsWith(CONFIGURATION_WARNING_PREFIX)
+            || warning.startsWith(LOCAL_DATABASE_WARNING_PREFIX)
+        );
+        this.#setStatus(
+            this.usesLocalDatabase
+                ? `Programma importato da ${file.name} e salvato nella copia locale`
+                : `Programma importato da ${file.name}: salva il database`,
+            'warning'
+        );
         this.#emit();
+        await this.#queueLocalPersistence();
     }
 
     async save() {
@@ -348,7 +478,7 @@ export class PlannerStore {
         this.#databaseConfiguration = usesConventionalDatabase
             ? emptyDatabaseConfiguration()
             : createDatabaseConfiguration(targetPath);
-        if (!usesConventionalDatabase) {
+        if (!this.usesLocalDatabase && !usesConventionalDatabase) {
             downloadJson(this.#databaseConfiguration, DATABASE_CONFIGURATION_FILE);
         }
 
@@ -358,12 +488,22 @@ export class PlannerStore {
         this.#isDemo = false;
         this.#removeConfigurationWarnings();
         this.#setStatus(
-            usesConventionalDatabase
-                ? 'Scaricato organizer-data.json: copialo in data/user'
-                : `Scaricati ${targetName} e ${DATABASE_CONFIGURATION_FILE}: copiali nei percorsi configurati`,
+            this.usesLocalDatabase
+                ? `Scaricato ${targetName}; la copia di lavoro resta salvata in IndexedDB`
+                : (usesConventionalDatabase
+                    ? 'Scaricato organizer-data.json: copialo in data/user'
+                    : `Scaricati ${targetName} e ${DATABASE_CONFIGURATION_FILE}: copiali nei percorsi configurati`),
             'success'
         );
         this.#emit();
+        await this.#queueLocalPersistence();
+    }
+
+    async clearLocalDatabase() {
+        if (!this.usesLocalDatabase) return;
+        await this.#localPersistenceQueue;
+        await this.#localDatabaseCache.clear();
+        this.#useEmptyLocalDatabase();
     }
 }
 

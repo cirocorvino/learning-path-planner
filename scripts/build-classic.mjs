@@ -71,11 +71,29 @@ const modules = [
         ]
     },
     {
+        name: 'localDatabaseApi',
+        file: 'js/local-database.js',
+        prelude: '',
+        exports: [
+            'LOCAL_DATABASE_NAME',
+            'LOCAL_DATABASE_VERSION',
+            'LOCAL_DATABASE_STORE',
+            'LOCAL_DATABASE_KEY',
+            'LOCAL_DATABASE_KIND',
+            'LOCAL_DATABASE_SCHEMA_VERSION',
+            'isDirectFileMode',
+            'createLocalDatabaseRecord',
+            'normalizeLocalDatabaseRecord',
+            'IndexedDbDatabaseCache'
+        ]
+    },
+    {
         name: 'storeApi',
         file: 'js/store.js',
         prelude: [
             'const { createEmptyDatabase, normalizeDatabase, replacePlan, snapshotDatabase, updateDatabase } = modelApi;',
-            'const { DATABASE_CONFIGURATION_FILE, DATABASE_CONFIGURATION_URL, DEFAULT_DATABASE_PATH, createDatabaseConfiguration, databaseFileNameFromPath, databaseUrlFromConfiguration, emptyDatabaseConfiguration, normalizeDatabaseConfiguration } = configurationApi;'
+            'const { DATABASE_CONFIGURATION_FILE, DATABASE_CONFIGURATION_URL, DEFAULT_DATABASE_PATH, createDatabaseConfiguration, databaseFileNameFromPath, databaseUrlFromConfiguration, emptyDatabaseConfiguration, normalizeDatabaseConfiguration } = configurationApi;',
+            'const { IndexedDbDatabaseCache, createLocalDatabaseRecord, isDirectFileMode, normalizeLocalDatabaseRecord } = localDatabaseApi;'
         ].join('\n'),
         exports: ['PlannerStore', 'plannerStore']
     },
@@ -105,15 +123,10 @@ function indent(value, spaces = 4) {
 }
 
 async function buildBundle() {
-    const example = JSON.parse(await readFile(resolve(root, 'data/examples/organizer-example.json'), 'utf8'));
     const sections = [
         '/* File generato da scripts/build-classic.mjs. Non modificare direttamente. */',
         '(() => {',
-        "    'use strict';",
-        '',
-        '    globalThis.LearningPlannerRuntime = Object.freeze({',
-        `        embeddedExampleDatabase: ${JSON.stringify(example, null, 8).replace(/\n/g, '\n        ')}`,
-        '    });'
+        "    'use strict';"
     ];
 
     for (const module of modules) {
