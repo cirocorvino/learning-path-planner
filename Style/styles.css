@@ -326,6 +326,47 @@ code {
     padding: 1rem;
 }
 
+.release-state-summary__totals {
+    color: #0f766e;
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-align: right;
+}
+
+.release-state-summary__headline {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.release-state-summary__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 0.85rem;
+}
+
+.release-state-summary__grid h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.82rem;
+}
+
+.release-state-summary__grid ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: #475569;
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+.release-state-summary__next {
+    margin: 0.85rem 0 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
 .release-scope__heading {
     display: flex;
     align-items: flex-start;
@@ -468,6 +509,25 @@ code {
     font-size: 0.84rem;
 }
 
+.critical-branches {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.9rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--line);
+}
+
+.critical-branches article {
+    display: grid;
+    gap: 0.15rem;
+    font-size: 0.78rem;
+}
+
+.critical-branches span,
+.critical-branches small {
+    color: var(--muted);
+}
+
 .forecast-list,
 .gate-list,
 .milestone-list {
@@ -509,7 +569,7 @@ code {
 
 .release-table {
     width: 100%;
-    min-width: 1050px;
+    min-width: 1420px;
     border-collapse: collapse;
     font-size: 0.8rem;
 }
@@ -530,22 +590,22 @@ code {
 
 .release-table th:first-child,
 .release-table td:first-child {
-    width: 29%;
+    width: 22%;
 }
 
 .release-table th:nth-child(2),
 .release-table td:nth-child(2) {
-    width: 10%;
+    width: 11%;
 }
 
 .release-table th:nth-child(3),
 .release-table td:nth-child(3) {
-    width: 12%;
+    width: 25%;
 }
 
 .release-table th:nth-child(4),
 .release-table td:nth-child(4) {
-    width: 18%;
+    width: 22%;
 }
 
 .release-table td p {
@@ -580,6 +640,54 @@ code {
 .release-wp__progress {
     display: grid;
     gap: 0.35rem;
+}
+
+.release-wp__outcome,
+.release-wp__facts p {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.release-wp__outcome strong,
+.release-wp__facts strong {
+    color: #334155;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+}
+
+.release-wp__facts {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.release-wp__facts p {
+    margin: 0;
+}
+
+.release-wp__estimate {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.release-wp__estimate dl {
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    gap: 0.2rem 0.5rem;
+    margin: 0;
+}
+
+.release-wp__estimate dt {
+    color: var(--muted);
+}
+
+.release-wp__estimate dd {
+    margin: 0;
+    font-weight: 700;
+}
+
+.release-wp__estimate small {
+    color: var(--muted);
+    line-height: 1.4;
 }
 
 .release-wp__evidence {
@@ -1132,6 +1240,10 @@ textarea:focus {
         grid-template-columns: 1fr;
     }
 
+    .release-state-summary__grid {
+        grid-template-columns: 1fr;
+    }
+
     .metrics {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
@@ -1162,6 +1274,7 @@ textarea:focus {
     .hero__title-row,
     .toolbar,
     .release-dashboard__header,
+    .release-panel__heading,
     .section-heading,
     .editor-section__heading,
     .module-card__header {
@@ -1171,6 +1284,10 @@ textarea:focus {
 
     .release-dashboard__capacity {
         max-width: none;
+        text-align: left;
+    }
+
+    .release-state-summary__totals {
         text-align: left;
     }
 

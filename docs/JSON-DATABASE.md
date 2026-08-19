@@ -132,11 +132,15 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
   },
   "state": { "progress": {} },
   "releasePlan": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "sourceSnapshot": {},
     "methodology": {},
     "capacity": {},
     "scopes": [],
+    "releaseStatus": {},
+    "deliveryModel": {},
+    "deliveryTotals": {},
+    "scheduleScope": {},
     "workPackages": [],
     "gates": [],
     "milestones": [],
@@ -149,11 +153,19 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
 }
 ```
 
-Ogni work package dichiara stato, percentuale, owner, ultima revisione, evidenze, dipendenze, eventuali topic del piano e un peso per ciascuno scope. Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo.
+Il formato `releasePlan` v1 resta leggibile. La v2 aggiunge un riepilogo in linguaggio comune, baseline originaria e forecast residuo, perimetro effettivamente schedulato e modello di coefficienti adattivi. In questo modo la completezza funzionale resta distinta dalla readiness al rilascio.
+
+Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze, eventuali topic del piano e un peso per ciascuno scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
+
+`dependencyRules` assegna una semantica temporale alla dipendenza: `required_before_start`, `overlap_after_design`, `required_at_final_gate` o `required_at_paid_gate`. `criticalPath` distingue la catena primaria dai rami obbligatori che possono procedere in parallelo e convergono su un gate.
+
+`deliveryTotals` distingue ore attive, ore già registrate, residuo netto e durata del Gantt. La durata del Gantt può essere più lunga delle settimane nette quando i moduli restano blocchi settimanali conservativi o intervengono eccezioni di calendario; `ganttRule` deve dichiararlo esplicitamente. I lead time esterni non si sommano automaticamente alla durata del Gantt.
+
+Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo.
 
 Gli scope devono versionare il denominatore e indicare la fonte canonica. `changeHistory` registra le variazioni del piano; `scopeChanges` registra le modifiche di perimetro che rendono percentuali di versioni diverse non direttamente confrontabili. Gate, milestone, forecast e percorso critico sono validati rispetto agli ID dichiarati.
 
-`capacity` distingue capacità lorda, quota pianificata e riserva. Quando deriva da limiti agentici o da altri proxy, `basis`, `officialLimitEvidence`, `empiricalBaseline` e `calibrationWindowWeeks` rendono esplicita l'assunzione e la successiva verifica.
+`capacity` distingue capacità lorda, quota pianificata e riserva. Quando deriva da limiti agentici o da altri proxy, `basis`, `officialLimitEvidence`, `empiricalBaseline` e `calibrationWindowWeeks` rendono esplicita l'assunzione e la successiva verifica. Il coefficiente non deve duplicare la riserva: il primo copre il normale costo del delivery previsto per una classe di intervento, la seconda resta capacità non allocata per variabilità e imprevisti.
 
 ## Piano importabile
 
