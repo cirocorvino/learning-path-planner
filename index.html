@@ -67,6 +67,68 @@
 
         <div id="plannerWarnings" class="notice hidden" role="status"></div>
 
+        <section id="releaseDashboard" class="release-dashboard hidden" aria-labelledby="releaseDashboardTitle">
+            <div class="release-dashboard__header">
+                <div>
+                    <span class="eyebrow eyebrow--dark">Release governance</span>
+                    <h2 id="releaseDashboardTitle">Stato del rilascio</h2>
+                    <p id="releaseSourceSummary" class="muted"></p>
+                </div>
+                <p id="releaseCapacitySummary" class="release-dashboard__capacity"></p>
+            </div>
+
+            <div id="releaseScopeCards" class="release-scopes" aria-label="Avanzamento per perimetro"></div>
+
+            <div class="release-dashboard__grid">
+                <section class="release-panel" aria-labelledby="criticalPathTitle">
+                    <h3 id="criticalPathTitle">Percorso critico</h3>
+                    <p id="releaseCriticalSummary" class="muted"></p>
+                    <ol id="releaseCriticalPath" class="critical-path"></ol>
+                </section>
+                <section class="release-panel" aria-labelledby="forecastTitle">
+                    <h3 id="forecastTitle">Previsioni</h3>
+                    <div id="releaseForecasts" class="forecast-list"></div>
+                </section>
+            </div>
+
+            <section class="release-panel release-panel--wide" aria-labelledby="workPackagesTitle">
+                <div class="release-panel__heading">
+                    <h3 id="workPackagesTitle">Work package</h3>
+                    <span class="muted">Pesi riferiti ai tre perimetri di rilascio</span>
+                </div>
+                <div class="release-table-wrap">
+                    <table class="release-table">
+                        <thead>
+                            <tr>
+                                <th>Funzionalità / work package</th>
+                                <th>Stato</th>
+                                <th>Avanzamento</th>
+                                <th>Peso</th>
+                                <th>Evidenza e revisione</th>
+                            </tr>
+                        </thead>
+                        <tbody id="releaseWorkPackages"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div class="release-dashboard__grid">
+                <section class="release-panel" aria-labelledby="gatesTitle">
+                    <h3 id="gatesTitle">Gate</h3>
+                    <div id="releaseGates" class="gate-list"></div>
+                </section>
+                <section class="release-panel" aria-labelledby="milestonesTitle">
+                    <h3 id="milestonesTitle">Milestone</h3>
+                    <div id="releaseMilestones" class="milestone-list"></div>
+                </section>
+            </div>
+
+            <section class="release-panel release-panel--wide" aria-labelledby="releaseHistoryTitle">
+                <h3 id="releaseHistoryTitle">Storico e variazioni di perimetro</h3>
+                <div id="releaseHistory" class="release-history"></div>
+            </section>
+        </section>
+
         <section class="card gantt-card" aria-labelledby="ganttTitle">
             <div class="section-heading">
                 <div>

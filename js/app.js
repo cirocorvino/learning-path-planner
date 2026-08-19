@@ -3,6 +3,7 @@ import {
     DAY_KEYS,
     MODULE_MODES,
     TOPIC_KINDS,
+    calculateReleaseScopeProgress,
     createId,
     databaseHasContent
 } from './model.js';
@@ -38,6 +39,17 @@ const elements = Object.fromEntries([
     'weeklyCapacity',
     'endDate',
     'plannerWarnings',
+    'releaseDashboard',
+    'releaseSourceSummary',
+    'releaseCapacitySummary',
+    'releaseScopeCards',
+    'releaseCriticalSummary',
+    'releaseCriticalPath',
+    'releaseForecasts',
+    'releaseWorkPackages',
+    'releaseGates',
+    'releaseMilestones',
+    'releaseHistory',
     'planPeriod',
     'ganttTable',
     'ganttRows',
@@ -83,6 +95,18 @@ const ROLE_LABELS = {
     focus: 'Focus / pianificabile',
     busy: 'Impegno',
     neutral: 'Neutra'
+};
+
+const RELEASE_STATUS_LABELS = {
+    complete: 'Completato',
+    validation: 'In validazione',
+    in_progress: 'In corso',
+    partial: 'Parziale',
+    config_gated: 'Pronto ma non attivo',
+    blocked: 'Bloccato',
+    not_started: 'Non iniziato',
+    future: 'Futuro',
+    superseded: 'Superato'
 };
 
 let currentDatabase = null;
@@ -168,8 +192,217 @@ function renderStoreState(snapshot) {
     elements.saveDatabaseButton.disabled = false;
 
     renderOverview();
+    renderReleaseDashboard();
     renderGantt();
     renderSelectedWeek();
+}
+
+function releaseStatusBadge(status) {
+    return createElement('span', {
+        className: `release-status release-status--${status}`,
+        text: RELEASE_STATUS_LABELS[status] || status
+    });
+}
+
+function releaseWorkPackageMap() {
+    const releasePlan = currentDatabase.releasePlan;
+    return new Map((releasePlan?.workPackages || []).map(workPackage => [workPackage.id, workPackage]));
+}
+
+function releaseWorkPackageForTopic(topicId) {
+    return currentDatabase.releasePlan?.workPackages.find(workPackage => workPackage.topicIds.includes(topicId)) || null;
+}
+
+function releaseDate(value, locale) {
+    return value ? formatDate(value, locale, { year: true }) : 'Non definita';
+}
+
+function renderReleaseDashboard() {
+    const releasePlan = currentDatabase.releasePlan;
+    setHidden(elements.releaseDashboard, !releasePlan);
+    if (!releasePlan) return;
+
+    const locale = currentDatabase.metadata.locale;
+    const source = releasePlan.sourceSnapshot;
+    elements.releaseSourceSummary.textContent = [
+        `${source.repository}@${source.commit}`,
+        `stato verificato ${releaseDate(source.assessedAt, locale)}`,
+        source.publicationStatus
+    ].join(' · ');
+    elements.releaseCapacitySummary.textContent = [
+        `${formatDuration(releasePlan.capacity.plannedWeeklyMinutes)} pianificate`,
+        `${formatDuration(releasePlan.capacity.reserveWeeklyMinutes)} di riserva`,
+        `${formatDuration(releasePlan.capacity.grossWeeklyMinutes)} lorde`,
+        `calibrazione ${releasePlan.capacity.calibrationWindowWeeks} settimane`
+    ].join(' · ');
+    elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
+
+    clear(elements.releaseScopeCards);
+    releasePlan.scopes.forEach(scope => {
+        const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+        const progress = createElement('progress', {
+            attributes: { max: 100, value: calculated, 'aria-label': `${scope.label}: ${calculated}%` }
+        });
+        elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
+            createElement('div', { className: 'release-scope__heading' }, [
+                createElement('div', {}, [
+                    createElement('strong', { text: scope.label }),
+                    createElement('span', { className: 'release-scope__version', text: scope.denominatorVersion })
+                ]),
+                createElement('span', { className: 'release-scope__percent', text: `${calculated.toFixed(1)}%` })
+            ]),
+            progress,
+            createElement('p', { className: 'muted', text: scope.perimeter }),
+            createElement('small', {
+                text: `${scope.status} · revisione ${releaseDate(scope.lastReviewedAt, locale)}`
+            })
+        ]));
+    });
+
+    const workPackageById = releaseWorkPackageMap();
+    clear(elements.releaseCriticalPath);
+    elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
+    releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
+        const workPackage = workPackageById.get(workPackageId);
+        if (!workPackage) return;
+        elements.releaseCriticalPath.append(createElement('li', {}, [
+            createElement('span', { text: workPackage.title }),
+            releaseStatusBadge(workPackage.status),
+            createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+        ]));
+    });
+
+    clear(elements.releaseForecasts);
+    releasePlan.forecasts.forEach(forecast => {
+        elements.releaseForecasts.append(createElement('article', { className: 'forecast' }, [
+            createElement('strong', { text: forecast.label }),
+            createElement('dl', {}, [
+                createElement('dt', { text: 'Minimo teorico' }),
+                createElement('dd', { text: releaseDate(forecast.theoreticalDate, locale) }),
+                createElement('dt', { text: 'Realistico' }),
+                createElement('dd', {
+                    text: `${releaseDate(forecast.realisticStart, locale)} – ${releaseDate(forecast.realisticEnd, locale)}`
+                }),
+                createElement('dt', { text: 'Prudenziale' }),
+                createElement('dd', {
+                    text: `${releaseDate(forecast.prudentStart, locale)} – ${releaseDate(forecast.prudentEnd, locale)}`
+                })
+            ]),
+            createElement('small', { text: forecast.commitmentStatus })
+        ]));
+    });
+
+    clear(elements.releaseWorkPackages);
+    releasePlan.workPackages.forEach(workPackage => {
+        const title = createElement('div', { className: 'release-wp__title' }, [
+            createElement('strong', { text: workPackage.title })
+        ]);
+        if (workPackage.criticalPath) {
+            title.append(createElement('span', { className: 'release-tag', text: 'Percorso critico' }));
+        }
+        if (workPackage.issueRefs.length) {
+            title.append(createElement('small', { text: workPackage.issueRefs.join(' · ') }));
+        }
+
+        const progress = createElement('progress', {
+            attributes: {
+                max: 100,
+                value: workPackage.completionPercent,
+                'aria-label': `${workPackage.title}: ${workPackage.completionPercent}%`
+            }
+        });
+        const progressCell = createElement('div', { className: 'release-wp__progress' }, [
+            createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
+            progress
+        ]);
+        const weights = releasePlan.scopes
+            .filter(scope => workPackage.weights[scope.id] > 0)
+            .map(scope => `${scope.label}: ${workPackage.weights[scope.id]}`)
+            .join(' · ') || 'Fuori perimetro';
+        const latestEvidence = workPackage.evidence.at(-1);
+        const evidence = createElement('div', { className: 'release-wp__evidence' }, [
+            createElement('span', { text: latestEvidence?.summary || 'Nessuna evidenza registrata' }),
+            createElement('small', {
+                text: `${latestEvidence?.reference || '—'} · revisione ${releaseDate(workPackage.lastReviewedAt, locale)}`
+            })
+        ]);
+
+        const row = createElement('tr');
+        row.append(
+            createElement('td', { attributes: { 'data-label': 'Funzionalità' } }, [
+                title,
+                createElement('p', { text: workPackage.description })
+            ]),
+            createElement('td', { attributes: { 'data-label': 'Stato' } }, [
+                releaseStatusBadge(workPackage.status)
+            ]),
+            createElement('td', { attributes: { 'data-label': 'Avanzamento' } }, [progressCell]),
+            createElement('td', { text: weights, attributes: { 'data-label': 'Peso' } }),
+            createElement('td', { attributes: { 'data-label': 'Evidenza' } }, [evidence])
+        );
+        elements.releaseWorkPackages.append(row);
+    });
+
+    clear(elements.releaseGates);
+    releasePlan.gates.forEach(gate => {
+        const criteria = createElement('ul');
+        gate.criteria.forEach(item => criteria.append(createElement('li', { text: item })));
+        const details = createElement('details', { className: 'release-detail' }, [
+            createElement('summary', {}, [
+                createElement('span', { text: gate.title }),
+                releaseStatusBadge(gate.status)
+            ]),
+            criteria,
+            createElement('small', {
+                text: `${gate.owner} · revisione ${releaseDate(gate.lastReviewedAt, locale)}`
+            })
+        ]);
+        elements.releaseGates.append(details);
+    });
+
+    const forecastById = new Map(releasePlan.forecasts.map(forecast => [forecast.id, forecast]));
+    clear(elements.releaseMilestones);
+    releasePlan.milestones.forEach(milestone => {
+        const forecast = forecastById.get(milestone.forecastId);
+        elements.releaseMilestones.append(createElement('article', { className: 'milestone' }, [
+            createElement('div', {}, [
+                createElement('strong', { text: milestone.title }),
+                createElement('p', { text: milestone.description })
+            ]),
+            releaseStatusBadge(milestone.status),
+            forecast
+                ? createElement('small', {
+                    text: `Finestra realistica: ${releaseDate(forecast.realisticStart, locale)} – ${releaseDate(forecast.realisticEnd, locale)}`
+                })
+                : null
+        ]));
+    });
+
+    clear(elements.releaseHistory);
+    const historyEntries = [
+        ...releasePlan.changeHistory.map(change => ({
+            date: change.date,
+            title: change.kind,
+            summary: change.summary,
+            detail: [change.from && `Da: ${change.from}`, change.to && `A: ${change.to}`].filter(Boolean).join(' · ')
+        })),
+        ...releasePlan.scopeChanges.map(change => ({
+            date: change.date,
+            title: `Perimetro ${change.scopeId}`,
+            summary: change.change,
+            detail: `${change.fromVersion} → ${change.toVersion} · ${change.denominatorImpact}`
+        }))
+    ].sort((left, right) => right.date.localeCompare(left.date));
+    historyEntries.forEach(entry => {
+        elements.releaseHistory.append(createElement('article', {}, [
+            createElement('time', { text: releaseDate(entry.date, locale), attributes: { datetime: entry.date } }),
+            createElement('div', {}, [
+                createElement('strong', { text: entry.title }),
+                createElement('p', { text: entry.summary }),
+                entry.detail ? createElement('small', { text: entry.detail }) : null
+            ])
+        ]));
+    });
 }
 
 function renderOverview() {
@@ -210,6 +443,12 @@ function renderGantt() {
     const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
 
     modules.forEach(module => {
+        const moduleWorkPackages = (currentDatabase.releasePlan?.workPackages || [])
+            .filter(workPackage => workPackage.topicIds.some(topicId => module.topics.some(topic => topic.id === topicId)));
+        const moduleProgress = moduleWorkPackages.length
+            ? Math.round(moduleWorkPackages.reduce((total, workPackage) => total + workPackage.completionPercent, 0) / moduleWorkPackages.length)
+            : null;
+        const isCritical = moduleWorkPackages.some(workPackage => workPackage.criticalPath);
         const row = createElement('div', {
             className: 'gantt__row',
             attributes: { role: 'row' }
@@ -219,7 +458,9 @@ function renderGantt() {
             createElement('span', { className: 'gantt__module-title', text: module.title }),
             createElement('span', {
                 className: 'gantt__module-meta',
-                text: module.mode === 'buffer' ? 'Pausa / buffer' : `${module.topics.length} argomenti`
+                text: module.mode === 'buffer'
+                    ? 'Pausa / buffer'
+                    : `${module.topics.length} argomenti${moduleProgress === null ? '' : ` · ${moduleProgress}%`}${isCritical ? ' · percorso critico' : ''}`
             })
         ]);
 
@@ -262,7 +503,7 @@ function renderGantt() {
             const left = daysBetween(currentSchedule.startDate, module.startDate) / totalDays * 100;
             const width = (daysBetween(module.startDate, module.endDate) + 1) / totalDays * 100;
             const bar = createElement('button', {
-                className: 'gantt__bar',
+                className: `gantt__bar${isCritical ? ' gantt__bar--critical' : ''}`,
                 type: 'button',
                 title: `Apri ${module.title}`,
                 attributes: {
@@ -351,9 +592,10 @@ function renderSelectedWeek() {
         allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
     } else {
         agenda.allocations.forEach(allocation => {
+            const workPackage = releaseWorkPackageForTopic(allocation.topicId);
             allocations.append(createElement('span', {
                 className: 'allocation-pill',
-                text: `${allocation.title} · ${formatDuration(allocation.minutes)}`
+                text: `${allocation.title} · ${formatDuration(allocation.minutes)}${workPackage ? ` · ${workPackage.completionPercent}%` : ''}`
             }));
         });
     }

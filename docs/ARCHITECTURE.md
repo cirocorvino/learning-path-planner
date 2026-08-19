@@ -4,7 +4,7 @@ Learning Path Planner è una single-page application statica, senza framework e 
 
 ## Componenti
 
-- `model.js` definisce invarianti, normalizza ogni input e migra il formato organizer v1 al formato v2.
+- `model.js` definisce invarianti, normalizza ogni input, migra il formato organizer v1 al formato v2 e valida l'estensione v3 per la governance di rilascio.
 - `db-configuration.js` valida la configurazione, limita i percorsi alla root del progetto e costruisce l'URL del database predefinito.
 - `local-database.js` gestisce l'involucro versionato e le transazioni IndexedDB usate esclusivamente da `file://`.
 - `planner.js` è un motore puro: calcola capacità, date del Gantt, allocazioni degli argomenti e agenda della settimana.
@@ -32,7 +32,7 @@ data/user/db-configuration.json
               validazione e migrazione
                          │
                          ▼
-                stato normalizzato v2
+                stato normalizzato v2/v3
                   │             │
                   ├──► Gantt    └──► interfaccia
                   │
@@ -44,7 +44,7 @@ Via HTTP lo stato modificato resta in memoria. Il download prodotto da **Salva**
 ### Avvio diretto `file://`
 
 ```text
-IndexedDB ── record presente ──► validazione ──► stato normalizzato v2
+IndexedDB ── record presente ──► validazione ──► stato normalizzato v2/v3
      │
      └── record assente ───────► planner vuoto, senza DEMO
 

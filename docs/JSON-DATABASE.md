@@ -1,4 +1,4 @@
-# Formato JSON v2
+# Formati JSON v2 e v3
 
 Ogni file viene validato integralmente prima di entrare nello stato dell'app. Date e orari usano rispettivamente `YYYY-MM-DD` e `HH:MM`; durate e stime sono minuti interi positivi.
 
@@ -113,6 +113,48 @@ Deve esistere almeno una categoria con ruolo `focus`. Solo gli slot collegati a 
 
 Le chiavi ammesse per `weekTemplate` sono `monday` … `sunday`. Un'eccezione con `focusAvailable: false` blocca tutti gli slot focus di quella data; il Gantt si estende se la capacità residua non basta.
 
+## Estensione v3 per piani di rilascio
+
+Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'oggetto obbligatorio `releasePlan`. I database v2 continuano a essere accettati e visualizzati senza dashboard di rilascio.
+
+```json
+{
+  "kind": "learning-planner-database",
+  "schemaVersion": 3,
+  "metadata": {},
+  "settings": {},
+  "categories": [],
+  "weekTemplate": {},
+  "plan": {
+    "kind": "learning-plan",
+    "schemaVersion": 2,
+    "modules": []
+  },
+  "state": { "progress": {} },
+  "releasePlan": {
+    "schemaVersion": 1,
+    "sourceSnapshot": {},
+    "methodology": {},
+    "capacity": {},
+    "scopes": [],
+    "workPackages": [],
+    "gates": [],
+    "milestones": [],
+    "forecasts": [],
+    "criticalPath": {},
+    "risks": [],
+    "changeHistory": [],
+    "scopeChanges": []
+  }
+}
+```
+
+Ogni work package dichiara stato, percentuale, owner, ultima revisione, evidenze, dipendenze, eventuali topic del piano e un peso per ciascuno scope. Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo.
+
+Gli scope devono versionare il denominatore e indicare la fonte canonica. `changeHistory` registra le variazioni del piano; `scopeChanges` registra le modifiche di perimetro che rendono percentuali di versioni diverse non direttamente confrontabili. Gate, milestone, forecast e percorso critico sono validati rispetto agli ID dichiarati.
+
+`capacity` distingue capacità lorda, quota pianificata e riserva. Quando deriva da limiti agentici o da altri proxy, `basis`, `officialLimitEvidence`, `empiricalBaseline` e `calibrationWindowWeeks` rendono esplicita l'assunzione e la successiva verifica.
+
 ## Piano importabile
 
 **Importa piano** accetta un database completo oppure il solo oggetto `learning-plan`:
@@ -157,6 +199,6 @@ Le chiavi ammesse per `weekTemplate` sono `monday` … `sunday`. Un'eccezione co
 
 ## Compatibilità v1
 
-Sono riconosciuti i database `organizer-database` e i programmi `study-program` con `courses` o `units`. La migrazione converte giorni italiani, ore in minuti, corsi in moduli e attività in argomenti. Le vecchie cache `weeklySchedules` e `courseTopics` non vengono mantenute: il planner rigenera la schedulazione e segnala l'operazione. Il file originale non viene mai sovrascritto direttamente: **Salva** scarica una nuova copia JSON v2.
+Sono riconosciuti i database `organizer-database` e i programmi `study-program` con `courses` o `units`. La migrazione converte giorni italiani, ore in minuti, corsi in moduli e attività in argomenti. Le vecchie cache `weeklySchedules` e `courseTopics` non vengono mantenute: il planner rigenera la schedulazione e segnala l'operazione. Il file originale non viene mai sovrascritto direttamente: **Salva** scarica una nuova copia JSON v2; un database di rilascio già v3 resta v3.
 
 Gli esempi canonici sono `data/examples/organizer-example.json` e `data/study-program-example.json`.

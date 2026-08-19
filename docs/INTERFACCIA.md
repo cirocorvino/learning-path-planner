@@ -46,7 +46,7 @@ Via HTTP, aprire un file chiamato `organizer-data.json` mantiene il percorso con
 
 ### Salva
 
-Serializza l'intero database corrente in formato JSON v2 e lo scarica. Non sovrascrive mai direttamente il file originale o un file presente nel progetto.
+Serializza l'intero database corrente nel formato JSON validato con cui è stato aperto, v2 oppure v3, e lo scarica. Non sovrascrive mai direttamente il file originale o un file presente nel progetto.
 
 In modalità `file://`, esporta soltanto il database JSON: la conservazione quotidiana è già garantita dall'autosalvataggio IndexedDB. Via HTTP, se è attivo il percorso convenzionale viene scaricato soltanto `organizer-data.json`; con un percorso personalizzato vengono scaricati il database e `db-configuration.json`. I file scaricati devono poi essere copiati manualmente nelle posizioni previste.
 

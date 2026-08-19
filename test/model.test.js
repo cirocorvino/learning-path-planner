@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
     DATABASE_KIND,
     PLAN_KIND,
+    calculateReleaseScopeProgress,
     createEmptyDatabase,
     databaseHasContent,
     normalizeDatabase,
@@ -14,6 +15,139 @@ import {
 
 const exampleUrl = new URL('../data/examples/organizer-example.json', import.meta.url);
 const example = JSON.parse(await readFile(exampleUrl, 'utf8'));
+
+function releaseDatabase() {
+    const database = structuredClone(example);
+    database.schemaVersion = 3;
+    database.releasePlan = {
+        schemaVersion: 1,
+        sourceSnapshot: {
+            assessedAt: '2026-08-19',
+            repository: 'owner/repository',
+            branch: 'main',
+            commit: 'abc1234',
+            canonicalProgressSource: 'docs/current-state.md',
+            canonicalSnapshotAt: '2026-08-19',
+            githubStateAt: '2026-08-19',
+            productMandateAt: '2026-08-19',
+            publicationStatus: 'provisional',
+            notes: ''
+        },
+        methodology: {
+            calculation: 'Somma ponderata.',
+            evidenceRule: 'Solo evidenze verificate.',
+            denominatorRule: 'Ogni scope somma 100.',
+            scale: ['0 = non iniziato', '100 = gate superato']
+        },
+        capacity: {
+            basis: 'Proxy agentico da calibrare',
+            effectiveFrom: '2026-08-24',
+            grossWeeklyMinutes: 2400,
+            plannedWeeklyMinutes: 1800,
+            reserveWeeklyMinutes: 600,
+            calibrationWindowWeeks: 2,
+            officialLimitEvidence: 'OpenAI pricing 2026-08-19',
+            empiricalBaseline: 'Una settimana osservata.',
+            assumptions: ['Le attese esterne restano vincoli di calendario.']
+        },
+        scopes: [{
+            id: 'pilot-v1',
+            label: 'Pilot v1',
+            version: '1.0',
+            denominatorVersion: 'pilot-v1@2026-08-19',
+            reportedCompletionPercent: 25,
+            lastReviewedAt: '2026-08-19',
+            status: 'provisional',
+            perimeter: 'Perimetro di prova.',
+            canonicalSource: 'docs/current-state.md',
+            notes: ''
+        }],
+        workPackages: [{
+            id: 'wp-one',
+            title: 'Primo work package',
+            description: 'Descrizione verificabile.',
+            status: 'in_progress',
+            completionPercent: 25,
+            weights: { 'pilot-v1': 100 },
+            topicIds: ['goals'],
+            dependencies: [],
+            issueRefs: ['#1'],
+            criticalPath: true,
+            owner: 'Tech Lead',
+            lastReviewedAt: '2026-08-19',
+            evidence: [{
+                type: 'repository',
+                reference: 'main@abc1234',
+                summary: 'Implementazione parziale verificata.',
+                observedAt: '2026-08-19'
+            }],
+            acceptanceSummary: 'Gate automatici e manuali superati.'
+        }],
+        gates: [{
+            id: 'gate-one',
+            title: 'Gate uno',
+            status: 'not_started',
+            owner: 'Tech Lead',
+            requiredFor: ['pilot-v1'],
+            criteria: ['Criterio verificabile'],
+            evidence: [],
+            decision: '',
+            lastReviewedAt: '2026-08-19'
+        }],
+        forecasts: [{
+            id: 'pilot',
+            label: 'Pilot',
+            theoreticalDate: '2027-01-01',
+            realisticStart: '2027-02-01',
+            realisticEnd: '2027-03-01',
+            prudentStart: '2027-04-01',
+            prudentEnd: '2027-05-01',
+            commitmentStatus: 'Non impegnativo',
+            assumptions: []
+        }],
+        milestones: [{
+            id: 'milestone-one',
+            title: 'Milestone uno',
+            status: 'not_started',
+            kind: 'pilot',
+            forecastId: 'pilot',
+            gateIds: ['gate-one'],
+            description: 'Milestone descritta.'
+        }],
+        criticalPath: {
+            summary: 'Percorso critico di prova.',
+            workPackageIds: ['wp-one'],
+            gateIds: ['gate-one']
+        },
+        risks: [{
+            id: 'risk-one',
+            title: 'Rischio uno',
+            level: 'high',
+            owner: 'PO',
+            trigger: 'Evento osservabile.',
+            mitigation: 'Azione concreta.',
+            decisionNeeded: ''
+        }],
+        changeHistory: [{
+            date: '2026-08-19',
+            kind: 'baseline',
+            summary: 'Nuova baseline.',
+            scopeIds: ['pilot-v1'],
+            from: '',
+            to: 'pilot-v1',
+            evidence: 'Mandato PO'
+        }],
+        scopeChanges: [{
+            date: '2026-08-19',
+            scopeId: 'pilot-v1',
+            fromVersion: 'legacy',
+            toVersion: 'pilot-v1@2026-08-19',
+            change: 'Perimetro ricostruito.',
+            denominatorImpact: 'Percentuali non confrontabili direttamente.'
+        }]
+    };
+    return database;
+}
 
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
@@ -28,6 +162,21 @@ test('normalizza il database dimostrativo v2', () => {
     assert.equal(result.database.plan.kind, PLAN_KIND);
     assert.equal(result.database.categories.filter(category => category.role === 'focus').length, 1);
     assert.equal(result.database.plan.modules.length, 3);
+});
+
+test('normalizza il database v3 e calcola la percentuale ponderata', () => {
+    const result = normalizeDatabase(releaseDatabase());
+
+    assert.equal(result.database.schemaVersion, 3);
+    assert.equal(result.database.releasePlan.workPackages[0].topicIds[0], 'goals');
+    assert.equal(calculateReleaseScopeProgress(result.database.releasePlan, 'pilot-v1'), 25);
+});
+
+test('rifiuta percentuali di scope divergenti dai pesi', () => {
+    const invalid = releaseDatabase();
+    invalid.releasePlan.scopes[0].reportedCompletionPercent = 30;
+
+    assert.throws(() => normalizeDatabase(invalid), /diverge dal calcolo/i);
 });
 
 test('rifiuta un database privo di categorie focus', () => {
