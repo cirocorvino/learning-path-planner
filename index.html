@@ -79,11 +79,24 @@
 
             <div id="releaseScopeCards" class="release-scopes" aria-label="Avanzamento per perimetro"></div>
 
+            <section id="releaseStatusPanel" class="release-panel release-panel--wide release-state-summary hidden"
+                aria-labelledby="releaseStateTitle">
+                <div class="release-panel__heading">
+                    <h3 id="releaseStateTitle">Che cosa significa oggi</h3>
+                    <span id="releaseDeliveryTotals" class="release-state-summary__totals"></span>
+                </div>
+                <p id="releaseStatusHeadline" class="release-state-summary__headline"></p>
+                <p id="releaseFunctionalNote" class="muted"></p>
+                <div id="releaseStatusDetails" class="release-state-summary__grid"></div>
+                <p id="releaseNextStep" class="release-state-summary__next"></p>
+            </section>
+
             <div class="release-dashboard__grid">
                 <section class="release-panel" aria-labelledby="criticalPathTitle">
                     <h3 id="criticalPathTitle">Percorso critico</h3>
                     <p id="releaseCriticalSummary" class="muted"></p>
                     <ol id="releaseCriticalPath" class="critical-path"></ol>
+                    <div id="releaseCriticalBranches" class="critical-branches"></div>
                 </section>
                 <section class="release-panel" aria-labelledby="forecastTitle">
                     <h3 id="forecastTitle">Previsioni</h3>
@@ -100,11 +113,11 @@
                     <table class="release-table">
                         <thead>
                             <tr>
-                                <th>Funzionalità / work package</th>
-                                <th>Stato</th>
-                                <th>Avanzamento</th>
-                                <th>Peso</th>
-                                <th>Evidenza e revisione</th>
+                                <th>Work package e risultato</th>
+                                <th>Stato funzionale</th>
+                                <th>Stato reale e lavoro residuo</th>
+                                <th>Stima delivery</th>
+                                <th>Peso, evidenza e revisione</th>
                             </tr>
                         </thead>
                         <tbody id="releaseWorkPackages"></tbody>

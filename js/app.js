@@ -43,8 +43,15 @@ const elements = Object.fromEntries([
     'releaseSourceSummary',
     'releaseCapacitySummary',
     'releaseScopeCards',
+    'releaseStatusPanel',
+    'releaseDeliveryTotals',
+    'releaseStatusHeadline',
+    'releaseFunctionalNote',
+    'releaseStatusDetails',
+    'releaseNextStep',
     'releaseCriticalSummary',
     'releaseCriticalPath',
+    'releaseCriticalBranches',
     'releaseForecasts',
     'releaseWorkPackages',
     'releaseGates',
@@ -107,6 +114,29 @@ const RELEASE_STATUS_LABELS = {
     not_started: 'Non iniziato',
     future: 'Futuro',
     superseded: 'Superato'
+};
+
+const DELIVERY_PROFILE_LABELS = {
+    documentation_process: 'Documentazione / processo',
+    internal_simple: 'Modifica interna semplice',
+    ui_user_flow: 'UI / flusso utente',
+    api_dto_database: 'API / DTO / database',
+    security_ai_concurrency: 'Sicurezza / provider AI / concorrenza',
+    cross_cutting_high_risk: 'Trasversale ad alto rischio',
+    unscheduled_future: 'Futuro non schedulato'
+};
+
+const ESTIMATE_BASIS_LABELS = {
+    base_technical: 'Base tecnica',
+    inclusive: 'Già inclusiva',
+    mixed: 'Mista',
+    not_scheduled: 'Non schedulata'
+};
+
+const CONFIDENCE_LABELS = {
+    high: 'Alta',
+    medium: 'Media',
+    low: 'Bassa'
 };
 
 let currentDatabase = null;
@@ -217,6 +247,20 @@ function releaseDate(value, locale) {
     return value ? formatDate(value, locale, { year: true }) : 'Non definita';
 }
 
+function releaseHours(value, locale) {
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)} h`;
+}
+
+function releaseNumber(value, locale) {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+}
+
+function releaseSummaryList(title, items) {
+    const list = createElement('ul');
+    items.forEach(item => list.append(createElement('li', { text: item })));
+    return createElement('section', {}, [createElement('h4', { text: title }), list]);
+}
+
 function renderReleaseDashboard() {
     const releasePlan = currentDatabase.releasePlan;
     setHidden(elements.releaseDashboard, !releasePlan);
@@ -259,6 +303,25 @@ function renderReleaseDashboard() {
         ]));
     });
 
+    const releaseStatus = releasePlan.releaseStatus;
+    setHidden(elements.releaseStatusPanel, !releaseStatus);
+    if (releaseStatus) {
+        const totals = releasePlan.deliveryTotals?.revisedBaseline;
+        elements.releaseStatusHeadline.textContent = releaseStatus.headline;
+        elements.releaseFunctionalNote.textContent = releaseStatus.functionalCompletionNote;
+        elements.releaseNextStep.textContent = `Prossimo passo: ${releaseStatus.nextStep}`;
+        elements.releaseDeliveryTotals.textContent = totals
+            ? `${releaseHours(totals.remainingActiveHours, locale)} residue · ${releaseNumber(totals.remainingOperationalWeeksAtPlannedCapacity, locale)} settimane nette · Gantt ${releaseNumber(totals.ganttCalendarWeeks, locale)} settimane fino al ${releaseDate(totals.ganttEndDate, locale)} · ${releaseHours(totals.weeklyReserveHours, locale)} di riserva/settimana`
+            : '';
+        elements.releaseDeliveryTotals.title = totals?.ganttRule || '';
+        clear(elements.releaseStatusDetails);
+        elements.releaseStatusDetails.append(
+            releaseSummaryList('Già utilizzabile', releaseStatus.availableNow),
+            releaseSummaryList('Parziale o dormiente', releaseStatus.partialOrDormant),
+            releaseSummaryList('Blocca il prossimo gate', releaseStatus.nextGateBlockers)
+        );
+    }
+
     const workPackageById = releaseWorkPackageMap();
     clear(elements.releaseCriticalPath);
     elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
@@ -269,6 +332,17 @@ function renderReleaseDashboard() {
             createElement('span', { text: workPackage.title }),
             releaseStatusBadge(workPackage.status),
             createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+        ]));
+    });
+    clear(elements.releaseCriticalBranches);
+    (releasePlan.criticalPath.convergingBranches || []).forEach(branch => {
+        const titles = branch.workPackageIds
+            .map(workPackageId => workPackageById.get(workPackageId)?.title)
+            .filter(Boolean);
+        elements.releaseCriticalBranches.append(createElement('article', {}, [
+            createElement('strong', { text: branch.label }),
+            createElement('span', { text: titles.join(' · ') }),
+            createElement('small', { text: `Converge su ${branch.joinsAt}` })
         ]));
     });
 
@@ -297,7 +371,9 @@ function renderReleaseDashboard() {
         const title = createElement('div', { className: 'release-wp__title' }, [
             createElement('strong', { text: workPackage.title })
         ]);
-        if (workPackage.criticalPath) {
+        const isPrimaryChain = (releasePlan.criticalPath.primaryChainWorkPackageIds || [])
+            .includes(workPackage.id);
+        if (isPrimaryChain || (!releasePlan.releaseStatus && workPackage.criticalPath)) {
             title.append(createElement('span', { className: 'release-tag', text: 'Percorso critico' }));
         }
         if (workPackage.issueRefs.length) {
@@ -312,6 +388,7 @@ function renderReleaseDashboard() {
             }
         });
         const progressCell = createElement('div', { className: 'release-wp__progress' }, [
+            releaseStatusBadge(workPackage.status),
             createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
             progress
         ]);
@@ -321,24 +398,77 @@ function renderReleaseDashboard() {
             .join(' · ') || 'Fuori perimetro';
         const latestEvidence = workPackage.evidence.at(-1);
         const evidence = createElement('div', { className: 'release-wp__evidence' }, [
+            createElement('span', { text: weights }),
             createElement('span', { text: latestEvidence?.summary || 'Nessuna evidenza registrata' }),
             createElement('small', {
                 text: `${latestEvidence?.reference || '—'} · revisione ${releaseDate(workPackage.lastReviewedAt, locale)}`
             })
         ]);
 
+        const stateDetail = createElement('div', { className: 'release-wp__facts' }, [
+            createElement('p', {}, [
+                createElement('strong', { text: 'Stato reale' }),
+                createElement('span', { text: workPackage.currentStateSummary || workPackage.description })
+            ]),
+            workPackage.remainingWorkSummary
+                ? createElement('p', {}, [
+                    createElement('strong', { text: 'Resta da fare' }),
+                    createElement('span', { text: workPackage.remainingWorkSummary })
+                ])
+                : null,
+            workPackage.dependencySummary
+                ? createElement('p', {}, [
+                    createElement('strong', { text: 'Dipendenze decisive' }),
+                    createElement('span', { text: workPackage.dependencySummary })
+                ])
+                : null
+        ]);
+
+        const estimate = workPackage.deliveryEstimate;
+        const estimateDetail = estimate
+            ? createElement('div', { className: 'release-wp__estimate' }, [
+                createElement('dl', {}, [
+                    createElement('dt', { text: 'Profilo' }),
+                    createElement('dd', { text: DELIVERY_PROFILE_LABELS[estimate.profile] || estimate.profile }),
+                    createElement('dt', { text: 'Base' }),
+                    createElement('dd', { text: ESTIMATE_BASIS_LABELS[estimate.estimateBasis] || estimate.estimateBasis }),
+                    createElement('dt', { text: 'Coefficiente' }),
+                    createElement('dd', {
+                        text: estimate.initialCoefficient === estimate.appliedCoefficient
+                            ? `${estimate.appliedCoefficient.toFixed(2)}×`
+                            : `${estimate.initialCoefficient.toFixed(2)}× rif. · ${estimate.appliedCoefficient.toFixed(2)}× applicato`
+                    }),
+                    createElement('dt', { text: 'Confidenza' }),
+                    createElement('dd', { text: CONFIDENCE_LABELS[estimate.confidence] || estimate.confidence }),
+                    createElement('dt', { text: 'Residuo base' }),
+                    createElement('dd', { text: releaseHours(estimate.remainingBaseHours, locale) }),
+                    createElement('dt', { text: 'Residuo corretto' }),
+                    createElement('dd', { text: releaseHours(estimate.correctedRemainingHours, locale) })
+                ]),
+                estimate.externalLeadTimes.length
+                    ? createElement('small', {
+                        text: `Lead time: ${estimate.externalLeadTimes.map(item => `${item.phase} ${item.minimumWeeks}/${item.realisticWeeks}/${item.prudentWeeks} sett.`).join(' · ')}`
+                    })
+                    : createElement('small', { text: 'Nessun lead time esterno separato.' })
+            ])
+            : createElement('span', { className: 'muted', text: 'Stima delivery non disponibile nel formato precedente.' });
+
         const row = createElement('tr');
         row.append(
-            createElement('td', { attributes: { 'data-label': 'Funzionalità' } }, [
+            createElement('td', { attributes: { 'data-label': 'Work package' } }, [
                 title,
-                createElement('p', { text: workPackage.description })
+                createElement('p', { text: workPackage.description }),
+                workPackage.productOutcome
+                    ? createElement('p', { className: 'release-wp__outcome' }, [
+                        createElement('strong', { text: 'Risultato concreto' }),
+                        createElement('span', { text: workPackage.productOutcome })
+                    ])
+                    : null
             ]),
-            createElement('td', { attributes: { 'data-label': 'Stato' } }, [
-                releaseStatusBadge(workPackage.status)
-            ]),
-            createElement('td', { attributes: { 'data-label': 'Avanzamento' } }, [progressCell]),
-            createElement('td', { text: weights, attributes: { 'data-label': 'Peso' } }),
-            createElement('td', { attributes: { 'data-label': 'Evidenza' } }, [evidence])
+            createElement('td', { attributes: { 'data-label': 'Stato funzionale' } }, [progressCell]),
+            createElement('td', { attributes: { 'data-label': 'Stato reale e residuo' } }, [stateDetail]),
+            createElement('td', { attributes: { 'data-label': 'Stima delivery' } }, [estimateDetail]),
+            createElement('td', { attributes: { 'data-label': 'Peso ed evidenza' } }, [evidence])
         );
         elements.releaseWorkPackages.append(row);
     });

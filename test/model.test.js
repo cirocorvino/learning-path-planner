@@ -149,6 +149,103 @@ function releaseDatabase() {
     return database;
 }
 
+function adaptiveReleaseDatabase() {
+    const database = releaseDatabase();
+    const releasePlan = database.releasePlan;
+    releasePlan.schemaVersion = 2;
+    Object.assign(releasePlan.workPackages[0], {
+        productOutcome: 'Risultato concreto per l’utente.',
+        currentStateSummary: 'Stato realmente verificato.',
+        remainingWorkSummary: 'Lavoro ancora necessario.',
+        dependencySummary: 'Nessuna dipendenza decisiva.',
+        dependencyRules: [],
+        deliveryEstimate: {
+            profile: 'ui_user_flow',
+            estimateBasis: 'base_technical',
+            initialCoefficient: 1.5,
+            appliedCoefficient: 1.5,
+            confidence: 'medium',
+            originalPlannedHours: 10,
+            remainingBaseHours: 8,
+            correctedRemainingHours: 12,
+            additiveAcrossWorkPackages: true,
+            sharedTopicIds: [],
+            externalLeadTimes: [{
+                phase: 'Sessioni utenti',
+                minimumWeeks: 1,
+                realisticWeeks: 2,
+                prudentWeeks: 4
+            }],
+            rationale: 'Il flusso richiede anche QA browser.',
+            calendarImpact: 'Le attese restano separate.'
+        }
+    });
+    releasePlan.releaseStatus = {
+        asOf: '2026-08-19',
+        headline: 'Il prodotto non è ancora pronto al pilot.',
+        functionalCompletionNote: 'Completezza e readiness sono misure distinte.',
+        availableNow: ['Prototipo disponibile'],
+        partialOrDormant: ['Provider non attivo'],
+        nextGateBlockers: ['Gate qualità'],
+        nextStep: 'Chiudere il gate.',
+        readiness: [{ scopeId: 'pilot-v1', status: 'not_ready', summary: 'Mancano gate.' }]
+    };
+    releasePlan.deliveryModel = {
+        version: 'adaptive-v1',
+        estimateInterpretation: 'Coefficienti applicati solo alle stime base.',
+        classes: [{ id: 'ui_user_flow', range: [1.4, 1.6], meaning: 'UI e journey.' }],
+        reserveRule: 'Riserva separata.',
+        calibration: {
+            minimumCompletedIssuesOverall: 12,
+            minimumCompletedIssuesPerClass: 3,
+            significantDeviationPercent: 20,
+            method: 'Confrontare previsto e reale.',
+            evidenceOwner: 'Tech Lead'
+        }
+    };
+    releasePlan.deliveryTotals = {
+        asOf: '2026-08-19',
+        originalBaseline: {
+            activeHours: 20,
+            operationalWeeksAtPlannedCapacity: 1,
+            explicitBufferWeeks: 1,
+            totalWeeksBeforeExternalGates: 2,
+            note: 'Baseline precedente.'
+        },
+        revisedBaseline: {
+            activeHours: 18,
+            completedRecordedHours: 6,
+            remainingActiveHours: 12,
+            totalOperationalWeeksAtPlannedCapacity: 0.6,
+            remainingOperationalWeeksAtPlannedCapacity: 0.4,
+            ganttCalendarWeeks: 1,
+            ganttEndDate: '2026-08-24',
+            ganttRule: 'Blocchi settimanali conservativi.',
+            explicitBufferWeeks: 0,
+            weeklyReserveHours: 10,
+            note: 'Baseline corretta.'
+        },
+        comparison: 'Attesa esterna separata.'
+    };
+    releasePlan.scheduleScope = {
+        scheduledThrough: 'pilot-v1',
+        statement: 'Il piano termina al pilot.',
+        unscheduledFuture: ['Voce'],
+        decisionRequired: 'Il PO decide il seguito.'
+    };
+    Object.assign(releasePlan.criticalPath, {
+        primaryChainWorkPackageIds: ['wp-one'],
+        parallelMandatoryWorkPackageIds: [],
+        convergingBranches: [{
+            id: 'quality',
+            label: 'Qualità',
+            workPackageIds: ['wp-one'],
+            joinsAt: 'gate-one'
+        }]
+    });
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -170,6 +267,23 @@ test('normalizza il database v3 e calcola la percentuale ponderata', () => {
     assert.equal(result.database.schemaVersion, 3);
     assert.equal(result.database.releasePlan.workPackages[0].topicIds[0], 'goals');
     assert.equal(calculateReleaseScopeProgress(result.database.releasePlan, 'pilot-v1'), 25);
+});
+
+test('normalizza il release plan adattivo v2 senza perdere stime e dipendenze temporali', () => {
+    const result = normalizeDatabase(adaptiveReleaseDatabase());
+    const releasePlan = result.database.releasePlan;
+
+    assert.equal(releasePlan.schemaVersion, 2);
+    assert.equal(releasePlan.releaseStatus.readiness[0].status, 'not_ready');
+    assert.equal(releasePlan.workPackages[0].deliveryEstimate.correctedRemainingHours, 12);
+    assert.equal(releasePlan.criticalPath.convergingBranches[0].joinsAt, 'gate-one');
+});
+
+test('rifiuta lead time adattivi con intervalli invertiti', () => {
+    const invalid = adaptiveReleaseDatabase();
+    invalid.releasePlan.workPackages[0].deliveryEstimate.externalLeadTimes[0].realisticWeeks = 5;
+
+    assert.throws(() => normalizeDatabase(invalid), /minimo <= realistico <= prudenziale/i);
 });
 
 test('rifiuta percentuali di scope divergenti dai pesi', () => {

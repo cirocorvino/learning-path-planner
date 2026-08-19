@@ -7,7 +7,15 @@
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
         const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-        const RELEASE_PLAN_SCHEMA_VERSION = 1;
+        const RELEASE_PLAN_SCHEMA_VERSION = 2;
+
+        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, RELEASE_PLAN_SCHEMA_VERSION];
+        const DELIVERY_DEPENDENCY_TYPES = [
+            'required_before_start',
+            'overlap_after_design',
+            'required_at_final_gate',
+            'required_at_paid_gate'
+        ];
 
         const RELEASE_STATUSES = [
             'complete',
@@ -449,6 +457,213 @@
             });
         }
 
+        function normalizeExternalLeadTimes(input, path) {
+            return (Array.isArray(input) ? input : []).map((leadTime, index) => {
+                const itemPath = `${path}[${index}]`;
+                requireObject(leadTime, itemPath);
+                const minimumWeeks = finiteNonNegative(leadTime.minimumWeeks, `${itemPath}.minimumWeeks`, { integer: true });
+                const realisticWeeks = finiteNonNegative(leadTime.realisticWeeks, `${itemPath}.realisticWeeks`, { integer: true });
+                const prudentWeeks = finiteNonNegative(leadTime.prudentWeeks, `${itemPath}.prudentWeeks`, { integer: true });
+                if (minimumWeeks > realisticWeeks || realisticWeeks > prudentWeeks) {
+                    throw new Error(`${itemPath} deve rispettare minimo <= realistico <= prudenziale.`);
+                }
+                return {
+                    phase: requiredString(leadTime.phase, `${itemPath}.phase`, 240),
+                    minimumWeeks,
+                    realisticWeeks,
+                    prudentWeeks
+                };
+            });
+        }
+
+        function normalizeDeliveryEstimate(input, path, topicIds) {
+            const source = requireObject(input, path);
+            const sharedTopicIds = normalizeStringList(source.sharedTopicIds, `${path}.sharedTopicIds`, 120)
+                .map((topicId, index) => validId(topicId, `${path}.sharedTopicIds[${index}]`));
+            sharedTopicIds.forEach(topicId => {
+                if (!topicIds.includes(topicId)) {
+                    throw new Error(`${path}.sharedTopicIds contiene il topic non associato ${topicId}.`);
+                }
+            });
+            return {
+                profile: requiredString(source.profile, `${path}.profile`, 80),
+                estimateBasis: requiredString(source.estimateBasis, `${path}.estimateBasis`, 80),
+                initialCoefficient: finitePositive(source.initialCoefficient, `${path}.initialCoefficient`),
+                appliedCoefficient: finitePositive(source.appliedCoefficient, `${path}.appliedCoefficient`),
+                confidence: requiredString(source.confidence, `${path}.confidence`, 40),
+                originalPlannedHours: finiteNonNegative(source.originalPlannedHours, `${path}.originalPlannedHours`),
+                remainingBaseHours: finiteNonNegative(source.remainingBaseHours, `${path}.remainingBaseHours`),
+                correctedRemainingHours: finiteNonNegative(source.correctedRemainingHours, `${path}.correctedRemainingHours`),
+                additiveAcrossWorkPackages: source.additiveAcrossWorkPackages === true,
+                sharedTopicIds,
+                externalLeadTimes: normalizeExternalLeadTimes(source.externalLeadTimes, `${path}.externalLeadTimes`),
+                rationale: requiredString(source.rationale, `${path}.rationale`, 1500),
+                calendarImpact: requiredString(source.calendarImpact, `${path}.calendarImpact`, 1000)
+            };
+        }
+
+        function normalizeDependencyRules(input, path) {
+            return (Array.isArray(input) ? input : []).map((rule, index) => {
+                const itemPath = `${path}[${index}]`;
+                requireObject(rule, itemPath);
+                const type = requiredString(rule.type, `${itemPath}.type`, 80);
+                if (!DELIVERY_DEPENDENCY_TYPES.includes(type)) {
+                    throw new Error(`${itemPath}.type non è supportato.`);
+                }
+                return {
+                    workPackageId: validId(rule.workPackageId, `${itemPath}.workPackageId`),
+                    type,
+                    rationale: requiredString(rule.rationale, `${itemPath}.rationale`, 1000)
+                };
+            });
+        }
+
+        function normalizeReleaseStatus(input, path, scopeIds) {
+            const source = requireObject(input, path);
+            const readiness = requireArray(source.readiness, `${path}.readiness`).map((item, index) => {
+                const itemPath = `${path}.readiness[${index}]`;
+                requireObject(item, itemPath);
+                const scopeId = validId(item.scopeId, `${itemPath}.scopeId`);
+                if (!scopeIds.has(scopeId)) throw new Error(`${itemPath}.scopeId è sconosciuto.`);
+                return {
+                    scopeId,
+                    status: requiredString(item.status, `${itemPath}.status`, 80),
+                    summary: requiredString(item.summary, `${itemPath}.summary`, 1000)
+                };
+            });
+            return {
+                asOf: validDate(source.asOf, `${path}.asOf`),
+                headline: requiredString(source.headline, `${path}.headline`, 1000),
+                functionalCompletionNote: requiredString(
+                    source.functionalCompletionNote,
+                    `${path}.functionalCompletionNote`,
+                    1500
+                ),
+                availableNow: normalizeStringList(source.availableNow, `${path}.availableNow`, 1000),
+                partialOrDormant: normalizeStringList(source.partialOrDormant, `${path}.partialOrDormant`, 1000),
+                nextGateBlockers: normalizeStringList(source.nextGateBlockers, `${path}.nextGateBlockers`, 1000),
+                nextStep: requiredString(source.nextStep, `${path}.nextStep`, 1500),
+                readiness
+            };
+        }
+
+        function normalizeDeliveryModel(input, path) {
+            const source = requireObject(input, path);
+            const classes = requireArray(source.classes, `${path}.classes`).map((item, index) => {
+                const itemPath = `${path}.classes[${index}]`;
+                requireObject(item, itemPath);
+                const range = requireArray(item.range, `${itemPath}.range`);
+                if (range.length !== 2) throw new Error(`${itemPath}.range deve contenere minimo e massimo.`);
+                const minimum = finitePositive(range[0], `${itemPath}.range[0]`);
+                const maximum = finitePositive(range[1], `${itemPath}.range[1]`);
+                if (minimum > maximum) throw new Error(`${itemPath}.range è invertito.`);
+                return {
+                    id: validId(item.id, `${itemPath}.id`),
+                    range: [minimum, maximum],
+                    meaning: requiredString(item.meaning, `${itemPath}.meaning`, 1000)
+                };
+            });
+            uniqueIds(classes, `${path}.classes`);
+
+            const calibrationInput = requireObject(source.calibration, `${path}.calibration`);
+            const calibration = {
+                minimumCompletedIssuesOverall: finitePositive(
+                    calibrationInput.minimumCompletedIssuesOverall,
+                    `${path}.calibration.minimumCompletedIssuesOverall`,
+                    { integer: true }
+                ),
+                minimumCompletedIssuesPerClass: finitePositive(
+                    calibrationInput.minimumCompletedIssuesPerClass,
+                    `${path}.calibration.minimumCompletedIssuesPerClass`,
+                    { integer: true }
+                ),
+                significantDeviationPercent: validPercentage(
+                    calibrationInput.significantDeviationPercent,
+                    `${path}.calibration.significantDeviationPercent`
+                ),
+                method: requiredString(calibrationInput.method, `${path}.calibration.method`, 1500),
+                evidenceOwner: requiredString(calibrationInput.evidenceOwner, `${path}.calibration.evidenceOwner`, 500)
+            };
+
+            return {
+                version: requiredString(source.version, `${path}.version`, 120),
+                estimateInterpretation: requiredString(source.estimateInterpretation, `${path}.estimateInterpretation`, 1500),
+                classes,
+                reserveRule: requiredString(source.reserveRule, `${path}.reserveRule`, 1000),
+                calibration
+            };
+        }
+
+        function normalizeDeliveryTotals(input, path) {
+            const source = requireObject(input, path);
+            const originalInput = requireObject(source.originalBaseline, `${path}.originalBaseline`);
+            const revisedInput = requireObject(source.revisedBaseline, `${path}.revisedBaseline`);
+            return {
+                asOf: validDate(source.asOf, `${path}.asOf`),
+                originalBaseline: {
+                    activeHours: finiteNonNegative(originalInput.activeHours, `${path}.originalBaseline.activeHours`),
+                    operationalWeeksAtPlannedCapacity: finiteNonNegative(
+                        originalInput.operationalWeeksAtPlannedCapacity,
+                        `${path}.originalBaseline.operationalWeeksAtPlannedCapacity`
+                    ),
+                    explicitBufferWeeks: finiteNonNegative(
+                        originalInput.explicitBufferWeeks,
+                        `${path}.originalBaseline.explicitBufferWeeks`
+                    ),
+                    totalWeeksBeforeExternalGates: finiteNonNegative(
+                        originalInput.totalWeeksBeforeExternalGates,
+                        `${path}.originalBaseline.totalWeeksBeforeExternalGates`
+                    ),
+                    note: requiredString(originalInput.note, `${path}.originalBaseline.note`, 1000)
+                },
+                revisedBaseline: {
+                    activeHours: finiteNonNegative(revisedInput.activeHours, `${path}.revisedBaseline.activeHours`),
+                    completedRecordedHours: finiteNonNegative(
+                        revisedInput.completedRecordedHours,
+                        `${path}.revisedBaseline.completedRecordedHours`
+                    ),
+                    remainingActiveHours: finiteNonNegative(
+                        revisedInput.remainingActiveHours,
+                        `${path}.revisedBaseline.remainingActiveHours`
+                    ),
+                    totalOperationalWeeksAtPlannedCapacity: finiteNonNegative(
+                        revisedInput.totalOperationalWeeksAtPlannedCapacity,
+                        `${path}.revisedBaseline.totalOperationalWeeksAtPlannedCapacity`
+                    ),
+                    remainingOperationalWeeksAtPlannedCapacity: finiteNonNegative(
+                        revisedInput.remainingOperationalWeeksAtPlannedCapacity,
+                        `${path}.revisedBaseline.remainingOperationalWeeksAtPlannedCapacity`
+                    ),
+                    ganttCalendarWeeks: finiteNonNegative(
+                        revisedInput.ganttCalendarWeeks,
+                        `${path}.revisedBaseline.ganttCalendarWeeks`
+                    ),
+                    ganttEndDate: validDate(revisedInput.ganttEndDate, `${path}.revisedBaseline.ganttEndDate`),
+                    ganttRule: requiredString(revisedInput.ganttRule, `${path}.revisedBaseline.ganttRule`, 1000),
+                    explicitBufferWeeks: finiteNonNegative(
+                        revisedInput.explicitBufferWeeks,
+                        `${path}.revisedBaseline.explicitBufferWeeks`
+                    ),
+                    weeklyReserveHours: finiteNonNegative(
+                        revisedInput.weeklyReserveHours,
+                        `${path}.revisedBaseline.weeklyReserveHours`
+                    ),
+                    note: requiredString(revisedInput.note, `${path}.revisedBaseline.note`, 1000)
+                },
+                comparison: requiredString(source.comparison, `${path}.comparison`, 1500)
+            };
+        }
+
+        function normalizeScheduleScope(input, path) {
+            const source = requireObject(input, path);
+            return {
+                scheduledThrough: validId(source.scheduledThrough, `${path}.scheduledThrough`),
+                statement: requiredString(source.statement, `${path}.statement`, 1000),
+                unscheduledFuture: normalizeStringList(source.unscheduledFuture, `${path}.unscheduledFuture`, 500),
+                decisionRequired: requiredString(source.decisionRequired, `${path}.decisionRequired`, 1000)
+            };
+        }
+
         function calculateReleaseScopeProgress(releasePlan, scopeId) {
             const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
             const weightedProgress = workPackages.reduce((total, workPackage) => {
@@ -460,9 +675,11 @@
 
         function normalizeReleasePlan(input, topicIds) {
             const source = requireObject(input, 'releasePlan');
-            if (Number(source.schemaVersion) !== RELEASE_PLAN_SCHEMA_VERSION) {
+            const releasePlanSchemaVersion = Number(source.schemaVersion);
+            if (!SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS.includes(releasePlanSchemaVersion)) {
                 throw new Error(`Versione release plan non supportata: ${source.schemaVersion}.`);
             }
+            const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
 
             const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
             const sourceSnapshot = {
@@ -558,6 +775,21 @@
             });
             uniqueIds(scopes, 'releasePlan.scopes');
             const scopeIds = new Set(scopes.map(scope => scope.id));
+            const releaseStatus = hasAdaptiveDelivery
+                ? normalizeReleaseStatus(source.releaseStatus, 'releasePlan.releaseStatus', scopeIds)
+                : null;
+            const deliveryModel = hasAdaptiveDelivery
+                ? normalizeDeliveryModel(source.deliveryModel, 'releasePlan.deliveryModel')
+                : null;
+            const deliveryTotals = hasAdaptiveDelivery
+                ? normalizeDeliveryTotals(source.deliveryTotals, 'releasePlan.deliveryTotals')
+                : null;
+            const scheduleScope = hasAdaptiveDelivery
+                ? normalizeScheduleScope(source.scheduleScope, 'releasePlan.scheduleScope')
+                : null;
+            if (scheduleScope && !scopeIds.has(scheduleScope.scheduledThrough)) {
+                throw new Error('releasePlan.scheduleScope.scheduledThrough contiene uno scope sconosciuto.');
+            }
 
             const workPackages = requireArray(source.workPackages, 'releasePlan.workPackages').map((workPackage, index) => {
                 const path = `releasePlan.workPackages[${index}]`;
@@ -577,7 +809,7 @@
                         throw new Error(`${path}.topicIds contiene l'argomento sconosciuto ${topicId}.`);
                     }
                 });
-                return {
+                const normalized = {
                     id: validId(workPackage.id, `${path}.id`),
                     title: requiredString(workPackage.title, `${path}.title`, 240),
                     description: requiredString(workPackage.description, `${path}.description`, 1500),
@@ -601,6 +833,33 @@
                         1500
                     )
                 };
+                if (hasAdaptiveDelivery) {
+                    Object.assign(normalized, {
+                        productOutcome: requiredString(workPackage.productOutcome, `${path}.productOutcome`, 1500),
+                        currentStateSummary: requiredString(
+                            workPackage.currentStateSummary,
+                            `${path}.currentStateSummary`,
+                            1500
+                        ),
+                        remainingWorkSummary: requiredString(
+                            workPackage.remainingWorkSummary,
+                            `${path}.remainingWorkSummary`,
+                            1500
+                        ),
+                        dependencySummary: requiredString(
+                            workPackage.dependencySummary,
+                            `${path}.dependencySummary`,
+                            1500
+                        ),
+                        dependencyRules: normalizeDependencyRules(workPackage.dependencyRules, `${path}.dependencyRules`),
+                        deliveryEstimate: normalizeDeliveryEstimate(
+                            workPackage.deliveryEstimate,
+                            `${path}.deliveryEstimate`,
+                            mappedTopicIds
+                        )
+                    });
+                }
+                return normalized;
             });
             uniqueIds(workPackages, 'releasePlan.workPackages');
             const workPackageIds = new Set(workPackages.map(workPackage => workPackage.id));
@@ -608,6 +867,18 @@
                 workPackage.dependencies.forEach(dependency => {
                     if (!workPackageIds.has(dependency)) {
                         throw new Error(`releasePlan.workPackages[${index}] dipende dal work package sconosciuto ${dependency}.`);
+                    }
+                });
+                (workPackage.dependencyRules || []).forEach(rule => {
+                    if (!workPackageIds.has(rule.workPackageId)) {
+                        throw new Error(
+                            `releasePlan.workPackages[${index}].dependencyRules usa il work package sconosciuto ${rule.workPackageId}.`
+                        );
+                    }
+                    if (!workPackage.dependencies.includes(rule.workPackageId)) {
+                        throw new Error(
+                            `releasePlan.workPackages[${index}].dependencyRules non è coerente con dependencies.`
+                        );
                     }
                 });
             });
@@ -722,6 +993,60 @@
                 workPackageIds: criticalWorkPackages,
                 gateIds: criticalGates
             };
+            if (hasAdaptiveDelivery) {
+                const primaryChainWorkPackageIds = normalizeStringList(
+                    criticalPathInput.primaryChainWorkPackageIds,
+                    'releasePlan.criticalPath.primaryChainWorkPackageIds',
+                    120
+                ).map((workPackageId, index) => validId(
+                    workPackageId,
+                    `releasePlan.criticalPath.primaryChainWorkPackageIds[${index}]`
+                ));
+                const parallelMandatoryWorkPackageIds = normalizeStringList(
+                    criticalPathInput.parallelMandatoryWorkPackageIds,
+                    'releasePlan.criticalPath.parallelMandatoryWorkPackageIds',
+                    120
+                ).map((workPackageId, index) => validId(
+                    workPackageId,
+                    `releasePlan.criticalPath.parallelMandatoryWorkPackageIds[${index}]`
+                ));
+                [...primaryChainWorkPackageIds, ...parallelMandatoryWorkPackageIds].forEach(workPackageId => {
+                    if (!workPackageIds.has(workPackageId)) {
+                        throw new Error(`releasePlan.criticalPath usa il work package sconosciuto ${workPackageId}.`);
+                    }
+                });
+                const convergingBranches = requireArray(
+                    criticalPathInput.convergingBranches,
+                    'releasePlan.criticalPath.convergingBranches'
+                ).map((branch, index) => {
+                    const path = `releasePlan.criticalPath.convergingBranches[${index}]`;
+                    requireObject(branch, path);
+                    const branchWorkPackageIds = normalizeStringList(branch.workPackageIds, `${path}.workPackageIds`, 120)
+                        .map((workPackageId, workPackageIndex) => validId(
+                            workPackageId,
+                            `${path}.workPackageIds[${workPackageIndex}]`
+                        ));
+                    branchWorkPackageIds.forEach(workPackageId => {
+                        if (!workPackageIds.has(workPackageId)) {
+                            throw new Error(`${path} usa il work package sconosciuto ${workPackageId}.`);
+                        }
+                    });
+                    const joinsAt = validId(branch.joinsAt, `${path}.joinsAt`);
+                    if (!gateIds.has(joinsAt)) throw new Error(`${path}.joinsAt usa il gate sconosciuto ${joinsAt}.`);
+                    return {
+                        id: validId(branch.id, `${path}.id`),
+                        label: requiredString(branch.label, `${path}.label`, 240),
+                        workPackageIds: branchWorkPackageIds,
+                        joinsAt
+                    };
+                });
+                uniqueIds(convergingBranches, 'releasePlan.criticalPath.convergingBranches');
+                Object.assign(criticalPath, {
+                    primaryChainWorkPackageIds,
+                    parallelMandatoryWorkPackageIds,
+                    convergingBranches
+                });
+            }
 
             const risks = requireArray(source.risks, 'releasePlan.risks').map((risk, index) => {
                 const path = `releasePlan.risks[${index}]`;
@@ -768,11 +1093,12 @@
             });
 
             return {
-                schemaVersion: RELEASE_PLAN_SCHEMA_VERSION,
+                schemaVersion: releasePlanSchemaVersion,
                 sourceSnapshot,
                 methodology,
                 capacity,
                 scopes,
+                ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
                 workPackages,
                 gates,
                 milestones,
@@ -2193,8 +2519,15 @@
             'releaseSourceSummary',
             'releaseCapacitySummary',
             'releaseScopeCards',
+            'releaseStatusPanel',
+            'releaseDeliveryTotals',
+            'releaseStatusHeadline',
+            'releaseFunctionalNote',
+            'releaseStatusDetails',
+            'releaseNextStep',
             'releaseCriticalSummary',
             'releaseCriticalPath',
+            'releaseCriticalBranches',
             'releaseForecasts',
             'releaseWorkPackages',
             'releaseGates',
@@ -2257,6 +2590,29 @@
             not_started: 'Non iniziato',
             future: 'Futuro',
             superseded: 'Superato'
+        };
+
+        const DELIVERY_PROFILE_LABELS = {
+            documentation_process: 'Documentazione / processo',
+            internal_simple: 'Modifica interna semplice',
+            ui_user_flow: 'UI / flusso utente',
+            api_dto_database: 'API / DTO / database',
+            security_ai_concurrency: 'Sicurezza / provider AI / concorrenza',
+            cross_cutting_high_risk: 'Trasversale ad alto rischio',
+            unscheduled_future: 'Futuro non schedulato'
+        };
+
+        const ESTIMATE_BASIS_LABELS = {
+            base_technical: 'Base tecnica',
+            inclusive: 'Già inclusiva',
+            mixed: 'Mista',
+            not_scheduled: 'Non schedulata'
+        };
+
+        const CONFIDENCE_LABELS = {
+            high: 'Alta',
+            medium: 'Media',
+            low: 'Bassa'
         };
 
         let currentDatabase = null;
@@ -2367,6 +2723,20 @@
             return value ? formatDate(value, locale, { year: true }) : 'Non definita';
         }
 
+        function releaseHours(value, locale) {
+            return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)} h`;
+        }
+
+        function releaseNumber(value, locale) {
+            return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+        }
+
+        function releaseSummaryList(title, items) {
+            const list = createElement('ul');
+            items.forEach(item => list.append(createElement('li', { text: item })));
+            return createElement('section', {}, [createElement('h4', { text: title }), list]);
+        }
+
         function renderReleaseDashboard() {
             const releasePlan = currentDatabase.releasePlan;
             setHidden(elements.releaseDashboard, !releasePlan);
@@ -2409,6 +2779,25 @@
                 ]));
             });
 
+            const releaseStatus = releasePlan.releaseStatus;
+            setHidden(elements.releaseStatusPanel, !releaseStatus);
+            if (releaseStatus) {
+                const totals = releasePlan.deliveryTotals?.revisedBaseline;
+                elements.releaseStatusHeadline.textContent = releaseStatus.headline;
+                elements.releaseFunctionalNote.textContent = releaseStatus.functionalCompletionNote;
+                elements.releaseNextStep.textContent = `Prossimo passo: ${releaseStatus.nextStep}`;
+                elements.releaseDeliveryTotals.textContent = totals
+                    ? `${releaseHours(totals.remainingActiveHours, locale)} residue · ${releaseNumber(totals.remainingOperationalWeeksAtPlannedCapacity, locale)} settimane nette · Gantt ${releaseNumber(totals.ganttCalendarWeeks, locale)} settimane fino al ${releaseDate(totals.ganttEndDate, locale)} · ${releaseHours(totals.weeklyReserveHours, locale)} di riserva/settimana`
+                    : '';
+                elements.releaseDeliveryTotals.title = totals?.ganttRule || '';
+                clear(elements.releaseStatusDetails);
+                elements.releaseStatusDetails.append(
+                    releaseSummaryList('Già utilizzabile', releaseStatus.availableNow),
+                    releaseSummaryList('Parziale o dormiente', releaseStatus.partialOrDormant),
+                    releaseSummaryList('Blocca il prossimo gate', releaseStatus.nextGateBlockers)
+                );
+            }
+
             const workPackageById = releaseWorkPackageMap();
             clear(elements.releaseCriticalPath);
             elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
@@ -2419,6 +2808,17 @@
                     createElement('span', { text: workPackage.title }),
                     releaseStatusBadge(workPackage.status),
                     createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+                ]));
+            });
+            clear(elements.releaseCriticalBranches);
+            (releasePlan.criticalPath.convergingBranches || []).forEach(branch => {
+                const titles = branch.workPackageIds
+                    .map(workPackageId => workPackageById.get(workPackageId)?.title)
+                    .filter(Boolean);
+                elements.releaseCriticalBranches.append(createElement('article', {}, [
+                    createElement('strong', { text: branch.label }),
+                    createElement('span', { text: titles.join(' · ') }),
+                    createElement('small', { text: `Converge su ${branch.joinsAt}` })
                 ]));
             });
 
@@ -2447,7 +2847,9 @@
                 const title = createElement('div', { className: 'release-wp__title' }, [
                     createElement('strong', { text: workPackage.title })
                 ]);
-                if (workPackage.criticalPath) {
+                const isPrimaryChain = (releasePlan.criticalPath.primaryChainWorkPackageIds || [])
+                    .includes(workPackage.id);
+                if (isPrimaryChain || (!releasePlan.releaseStatus && workPackage.criticalPath)) {
                     title.append(createElement('span', { className: 'release-tag', text: 'Percorso critico' }));
                 }
                 if (workPackage.issueRefs.length) {
@@ -2462,6 +2864,7 @@
                     }
                 });
                 const progressCell = createElement('div', { className: 'release-wp__progress' }, [
+                    releaseStatusBadge(workPackage.status),
                     createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
                     progress
                 ]);
@@ -2471,24 +2874,77 @@
                     .join(' · ') || 'Fuori perimetro';
                 const latestEvidence = workPackage.evidence.at(-1);
                 const evidence = createElement('div', { className: 'release-wp__evidence' }, [
+                    createElement('span', { text: weights }),
                     createElement('span', { text: latestEvidence?.summary || 'Nessuna evidenza registrata' }),
                     createElement('small', {
                         text: `${latestEvidence?.reference || '—'} · revisione ${releaseDate(workPackage.lastReviewedAt, locale)}`
                     })
                 ]);
 
+                const stateDetail = createElement('div', { className: 'release-wp__facts' }, [
+                    createElement('p', {}, [
+                        createElement('strong', { text: 'Stato reale' }),
+                        createElement('span', { text: workPackage.currentStateSummary || workPackage.description })
+                    ]),
+                    workPackage.remainingWorkSummary
+                        ? createElement('p', {}, [
+                            createElement('strong', { text: 'Resta da fare' }),
+                            createElement('span', { text: workPackage.remainingWorkSummary })
+                        ])
+                        : null,
+                    workPackage.dependencySummary
+                        ? createElement('p', {}, [
+                            createElement('strong', { text: 'Dipendenze decisive' }),
+                            createElement('span', { text: workPackage.dependencySummary })
+                        ])
+                        : null
+                ]);
+
+                const estimate = workPackage.deliveryEstimate;
+                const estimateDetail = estimate
+                    ? createElement('div', { className: 'release-wp__estimate' }, [
+                        createElement('dl', {}, [
+                            createElement('dt', { text: 'Profilo' }),
+                            createElement('dd', { text: DELIVERY_PROFILE_LABELS[estimate.profile] || estimate.profile }),
+                            createElement('dt', { text: 'Base' }),
+                            createElement('dd', { text: ESTIMATE_BASIS_LABELS[estimate.estimateBasis] || estimate.estimateBasis }),
+                            createElement('dt', { text: 'Coefficiente' }),
+                            createElement('dd', {
+                                text: estimate.initialCoefficient === estimate.appliedCoefficient
+                                    ? `${estimate.appliedCoefficient.toFixed(2)}×`
+                                    : `${estimate.initialCoefficient.toFixed(2)}× rif. · ${estimate.appliedCoefficient.toFixed(2)}× applicato`
+                            }),
+                            createElement('dt', { text: 'Confidenza' }),
+                            createElement('dd', { text: CONFIDENCE_LABELS[estimate.confidence] || estimate.confidence }),
+                            createElement('dt', { text: 'Residuo base' }),
+                            createElement('dd', { text: releaseHours(estimate.remainingBaseHours, locale) }),
+                            createElement('dt', { text: 'Residuo corretto' }),
+                            createElement('dd', { text: releaseHours(estimate.correctedRemainingHours, locale) })
+                        ]),
+                        estimate.externalLeadTimes.length
+                            ? createElement('small', {
+                                text: `Lead time: ${estimate.externalLeadTimes.map(item => `${item.phase} ${item.minimumWeeks}/${item.realisticWeeks}/${item.prudentWeeks} sett.`).join(' · ')}`
+                            })
+                            : createElement('small', { text: 'Nessun lead time esterno separato.' })
+                    ])
+                    : createElement('span', { className: 'muted', text: 'Stima delivery non disponibile nel formato precedente.' });
+
                 const row = createElement('tr');
                 row.append(
-                    createElement('td', { attributes: { 'data-label': 'Funzionalità' } }, [
+                    createElement('td', { attributes: { 'data-label': 'Work package' } }, [
                         title,
-                        createElement('p', { text: workPackage.description })
+                        createElement('p', { text: workPackage.description }),
+                        workPackage.productOutcome
+                            ? createElement('p', { className: 'release-wp__outcome' }, [
+                                createElement('strong', { text: 'Risultato concreto' }),
+                                createElement('span', { text: workPackage.productOutcome })
+                            ])
+                            : null
                     ]),
-                    createElement('td', { attributes: { 'data-label': 'Stato' } }, [
-                        releaseStatusBadge(workPackage.status)
-                    ]),
-                    createElement('td', { attributes: { 'data-label': 'Avanzamento' } }, [progressCell]),
-                    createElement('td', { text: weights, attributes: { 'data-label': 'Peso' } }),
-                    createElement('td', { attributes: { 'data-label': 'Evidenza' } }, [evidence])
+                    createElement('td', { attributes: { 'data-label': 'Stato funzionale' } }, [progressCell]),
+                    createElement('td', { attributes: { 'data-label': 'Stato reale e residuo' } }, [stateDetail]),
+                    createElement('td', { attributes: { 'data-label': 'Stima delivery' } }, [estimateDetail]),
+                    createElement('td', { attributes: { 'data-label': 'Peso ed evidenza' } }, [evidence])
                 );
                 elements.releaseWorkPackages.append(row);
             });

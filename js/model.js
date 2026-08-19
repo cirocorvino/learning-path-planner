@@ -2,7 +2,15 @@ export const DATABASE_KIND = 'learning-planner-database';
 export const PLAN_KIND = 'learning-plan';
 export const SCHEMA_VERSION = 2;
 export const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-export const RELEASE_PLAN_SCHEMA_VERSION = 1;
+export const RELEASE_PLAN_SCHEMA_VERSION = 2;
+
+const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, RELEASE_PLAN_SCHEMA_VERSION];
+const DELIVERY_DEPENDENCY_TYPES = [
+    'required_before_start',
+    'overlap_after_design',
+    'required_at_final_gate',
+    'required_at_paid_gate'
+];
 
 export const RELEASE_STATUSES = [
     'complete',
@@ -444,6 +452,213 @@ function normalizeReleaseEvidence(input, path) {
     });
 }
 
+function normalizeExternalLeadTimes(input, path) {
+    return (Array.isArray(input) ? input : []).map((leadTime, index) => {
+        const itemPath = `${path}[${index}]`;
+        requireObject(leadTime, itemPath);
+        const minimumWeeks = finiteNonNegative(leadTime.minimumWeeks, `${itemPath}.minimumWeeks`, { integer: true });
+        const realisticWeeks = finiteNonNegative(leadTime.realisticWeeks, `${itemPath}.realisticWeeks`, { integer: true });
+        const prudentWeeks = finiteNonNegative(leadTime.prudentWeeks, `${itemPath}.prudentWeeks`, { integer: true });
+        if (minimumWeeks > realisticWeeks || realisticWeeks > prudentWeeks) {
+            throw new Error(`${itemPath} deve rispettare minimo <= realistico <= prudenziale.`);
+        }
+        return {
+            phase: requiredString(leadTime.phase, `${itemPath}.phase`, 240),
+            minimumWeeks,
+            realisticWeeks,
+            prudentWeeks
+        };
+    });
+}
+
+function normalizeDeliveryEstimate(input, path, topicIds) {
+    const source = requireObject(input, path);
+    const sharedTopicIds = normalizeStringList(source.sharedTopicIds, `${path}.sharedTopicIds`, 120)
+        .map((topicId, index) => validId(topicId, `${path}.sharedTopicIds[${index}]`));
+    sharedTopicIds.forEach(topicId => {
+        if (!topicIds.includes(topicId)) {
+            throw new Error(`${path}.sharedTopicIds contiene il topic non associato ${topicId}.`);
+        }
+    });
+    return {
+        profile: requiredString(source.profile, `${path}.profile`, 80),
+        estimateBasis: requiredString(source.estimateBasis, `${path}.estimateBasis`, 80),
+        initialCoefficient: finitePositive(source.initialCoefficient, `${path}.initialCoefficient`),
+        appliedCoefficient: finitePositive(source.appliedCoefficient, `${path}.appliedCoefficient`),
+        confidence: requiredString(source.confidence, `${path}.confidence`, 40),
+        originalPlannedHours: finiteNonNegative(source.originalPlannedHours, `${path}.originalPlannedHours`),
+        remainingBaseHours: finiteNonNegative(source.remainingBaseHours, `${path}.remainingBaseHours`),
+        correctedRemainingHours: finiteNonNegative(source.correctedRemainingHours, `${path}.correctedRemainingHours`),
+        additiveAcrossWorkPackages: source.additiveAcrossWorkPackages === true,
+        sharedTopicIds,
+        externalLeadTimes: normalizeExternalLeadTimes(source.externalLeadTimes, `${path}.externalLeadTimes`),
+        rationale: requiredString(source.rationale, `${path}.rationale`, 1500),
+        calendarImpact: requiredString(source.calendarImpact, `${path}.calendarImpact`, 1000)
+    };
+}
+
+function normalizeDependencyRules(input, path) {
+    return (Array.isArray(input) ? input : []).map((rule, index) => {
+        const itemPath = `${path}[${index}]`;
+        requireObject(rule, itemPath);
+        const type = requiredString(rule.type, `${itemPath}.type`, 80);
+        if (!DELIVERY_DEPENDENCY_TYPES.includes(type)) {
+            throw new Error(`${itemPath}.type non è supportato.`);
+        }
+        return {
+            workPackageId: validId(rule.workPackageId, `${itemPath}.workPackageId`),
+            type,
+            rationale: requiredString(rule.rationale, `${itemPath}.rationale`, 1000)
+        };
+    });
+}
+
+function normalizeReleaseStatus(input, path, scopeIds) {
+    const source = requireObject(input, path);
+    const readiness = requireArray(source.readiness, `${path}.readiness`).map((item, index) => {
+        const itemPath = `${path}.readiness[${index}]`;
+        requireObject(item, itemPath);
+        const scopeId = validId(item.scopeId, `${itemPath}.scopeId`);
+        if (!scopeIds.has(scopeId)) throw new Error(`${itemPath}.scopeId è sconosciuto.`);
+        return {
+            scopeId,
+            status: requiredString(item.status, `${itemPath}.status`, 80),
+            summary: requiredString(item.summary, `${itemPath}.summary`, 1000)
+        };
+    });
+    return {
+        asOf: validDate(source.asOf, `${path}.asOf`),
+        headline: requiredString(source.headline, `${path}.headline`, 1000),
+        functionalCompletionNote: requiredString(
+            source.functionalCompletionNote,
+            `${path}.functionalCompletionNote`,
+            1500
+        ),
+        availableNow: normalizeStringList(source.availableNow, `${path}.availableNow`, 1000),
+        partialOrDormant: normalizeStringList(source.partialOrDormant, `${path}.partialOrDormant`, 1000),
+        nextGateBlockers: normalizeStringList(source.nextGateBlockers, `${path}.nextGateBlockers`, 1000),
+        nextStep: requiredString(source.nextStep, `${path}.nextStep`, 1500),
+        readiness
+    };
+}
+
+function normalizeDeliveryModel(input, path) {
+    const source = requireObject(input, path);
+    const classes = requireArray(source.classes, `${path}.classes`).map((item, index) => {
+        const itemPath = `${path}.classes[${index}]`;
+        requireObject(item, itemPath);
+        const range = requireArray(item.range, `${itemPath}.range`);
+        if (range.length !== 2) throw new Error(`${itemPath}.range deve contenere minimo e massimo.`);
+        const minimum = finitePositive(range[0], `${itemPath}.range[0]`);
+        const maximum = finitePositive(range[1], `${itemPath}.range[1]`);
+        if (minimum > maximum) throw new Error(`${itemPath}.range è invertito.`);
+        return {
+            id: validId(item.id, `${itemPath}.id`),
+            range: [minimum, maximum],
+            meaning: requiredString(item.meaning, `${itemPath}.meaning`, 1000)
+        };
+    });
+    uniqueIds(classes, `${path}.classes`);
+
+    const calibrationInput = requireObject(source.calibration, `${path}.calibration`);
+    const calibration = {
+        minimumCompletedIssuesOverall: finitePositive(
+            calibrationInput.minimumCompletedIssuesOverall,
+            `${path}.calibration.minimumCompletedIssuesOverall`,
+            { integer: true }
+        ),
+        minimumCompletedIssuesPerClass: finitePositive(
+            calibrationInput.minimumCompletedIssuesPerClass,
+            `${path}.calibration.minimumCompletedIssuesPerClass`,
+            { integer: true }
+        ),
+        significantDeviationPercent: validPercentage(
+            calibrationInput.significantDeviationPercent,
+            `${path}.calibration.significantDeviationPercent`
+        ),
+        method: requiredString(calibrationInput.method, `${path}.calibration.method`, 1500),
+        evidenceOwner: requiredString(calibrationInput.evidenceOwner, `${path}.calibration.evidenceOwner`, 500)
+    };
+
+    return {
+        version: requiredString(source.version, `${path}.version`, 120),
+        estimateInterpretation: requiredString(source.estimateInterpretation, `${path}.estimateInterpretation`, 1500),
+        classes,
+        reserveRule: requiredString(source.reserveRule, `${path}.reserveRule`, 1000),
+        calibration
+    };
+}
+
+function normalizeDeliveryTotals(input, path) {
+    const source = requireObject(input, path);
+    const originalInput = requireObject(source.originalBaseline, `${path}.originalBaseline`);
+    const revisedInput = requireObject(source.revisedBaseline, `${path}.revisedBaseline`);
+    return {
+        asOf: validDate(source.asOf, `${path}.asOf`),
+        originalBaseline: {
+            activeHours: finiteNonNegative(originalInput.activeHours, `${path}.originalBaseline.activeHours`),
+            operationalWeeksAtPlannedCapacity: finiteNonNegative(
+                originalInput.operationalWeeksAtPlannedCapacity,
+                `${path}.originalBaseline.operationalWeeksAtPlannedCapacity`
+            ),
+            explicitBufferWeeks: finiteNonNegative(
+                originalInput.explicitBufferWeeks,
+                `${path}.originalBaseline.explicitBufferWeeks`
+            ),
+            totalWeeksBeforeExternalGates: finiteNonNegative(
+                originalInput.totalWeeksBeforeExternalGates,
+                `${path}.originalBaseline.totalWeeksBeforeExternalGates`
+            ),
+            note: requiredString(originalInput.note, `${path}.originalBaseline.note`, 1000)
+        },
+        revisedBaseline: {
+            activeHours: finiteNonNegative(revisedInput.activeHours, `${path}.revisedBaseline.activeHours`),
+            completedRecordedHours: finiteNonNegative(
+                revisedInput.completedRecordedHours,
+                `${path}.revisedBaseline.completedRecordedHours`
+            ),
+            remainingActiveHours: finiteNonNegative(
+                revisedInput.remainingActiveHours,
+                `${path}.revisedBaseline.remainingActiveHours`
+            ),
+            totalOperationalWeeksAtPlannedCapacity: finiteNonNegative(
+                revisedInput.totalOperationalWeeksAtPlannedCapacity,
+                `${path}.revisedBaseline.totalOperationalWeeksAtPlannedCapacity`
+            ),
+            remainingOperationalWeeksAtPlannedCapacity: finiteNonNegative(
+                revisedInput.remainingOperationalWeeksAtPlannedCapacity,
+                `${path}.revisedBaseline.remainingOperationalWeeksAtPlannedCapacity`
+            ),
+            ganttCalendarWeeks: finiteNonNegative(
+                revisedInput.ganttCalendarWeeks,
+                `${path}.revisedBaseline.ganttCalendarWeeks`
+            ),
+            ganttEndDate: validDate(revisedInput.ganttEndDate, `${path}.revisedBaseline.ganttEndDate`),
+            ganttRule: requiredString(revisedInput.ganttRule, `${path}.revisedBaseline.ganttRule`, 1000),
+            explicitBufferWeeks: finiteNonNegative(
+                revisedInput.explicitBufferWeeks,
+                `${path}.revisedBaseline.explicitBufferWeeks`
+            ),
+            weeklyReserveHours: finiteNonNegative(
+                revisedInput.weeklyReserveHours,
+                `${path}.revisedBaseline.weeklyReserveHours`
+            ),
+            note: requiredString(revisedInput.note, `${path}.revisedBaseline.note`, 1000)
+        },
+        comparison: requiredString(source.comparison, `${path}.comparison`, 1500)
+    };
+}
+
+function normalizeScheduleScope(input, path) {
+    const source = requireObject(input, path);
+    return {
+        scheduledThrough: validId(source.scheduledThrough, `${path}.scheduledThrough`),
+        statement: requiredString(source.statement, `${path}.statement`, 1000),
+        unscheduledFuture: normalizeStringList(source.unscheduledFuture, `${path}.unscheduledFuture`, 500),
+        decisionRequired: requiredString(source.decisionRequired, `${path}.decisionRequired`, 1000)
+    };
+}
+
 export function calculateReleaseScopeProgress(releasePlan, scopeId) {
     const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
     const weightedProgress = workPackages.reduce((total, workPackage) => {
@@ -455,9 +670,11 @@ export function calculateReleaseScopeProgress(releasePlan, scopeId) {
 
 function normalizeReleasePlan(input, topicIds) {
     const source = requireObject(input, 'releasePlan');
-    if (Number(source.schemaVersion) !== RELEASE_PLAN_SCHEMA_VERSION) {
+    const releasePlanSchemaVersion = Number(source.schemaVersion);
+    if (!SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS.includes(releasePlanSchemaVersion)) {
         throw new Error(`Versione release plan non supportata: ${source.schemaVersion}.`);
     }
+    const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
 
     const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
     const sourceSnapshot = {
@@ -553,6 +770,21 @@ function normalizeReleasePlan(input, topicIds) {
     });
     uniqueIds(scopes, 'releasePlan.scopes');
     const scopeIds = new Set(scopes.map(scope => scope.id));
+    const releaseStatus = hasAdaptiveDelivery
+        ? normalizeReleaseStatus(source.releaseStatus, 'releasePlan.releaseStatus', scopeIds)
+        : null;
+    const deliveryModel = hasAdaptiveDelivery
+        ? normalizeDeliveryModel(source.deliveryModel, 'releasePlan.deliveryModel')
+        : null;
+    const deliveryTotals = hasAdaptiveDelivery
+        ? normalizeDeliveryTotals(source.deliveryTotals, 'releasePlan.deliveryTotals')
+        : null;
+    const scheduleScope = hasAdaptiveDelivery
+        ? normalizeScheduleScope(source.scheduleScope, 'releasePlan.scheduleScope')
+        : null;
+    if (scheduleScope && !scopeIds.has(scheduleScope.scheduledThrough)) {
+        throw new Error('releasePlan.scheduleScope.scheduledThrough contiene uno scope sconosciuto.');
+    }
 
     const workPackages = requireArray(source.workPackages, 'releasePlan.workPackages').map((workPackage, index) => {
         const path = `releasePlan.workPackages[${index}]`;
@@ -572,7 +804,7 @@ function normalizeReleasePlan(input, topicIds) {
                 throw new Error(`${path}.topicIds contiene l'argomento sconosciuto ${topicId}.`);
             }
         });
-        return {
+        const normalized = {
             id: validId(workPackage.id, `${path}.id`),
             title: requiredString(workPackage.title, `${path}.title`, 240),
             description: requiredString(workPackage.description, `${path}.description`, 1500),
@@ -596,6 +828,33 @@ function normalizeReleasePlan(input, topicIds) {
                 1500
             )
         };
+        if (hasAdaptiveDelivery) {
+            Object.assign(normalized, {
+                productOutcome: requiredString(workPackage.productOutcome, `${path}.productOutcome`, 1500),
+                currentStateSummary: requiredString(
+                    workPackage.currentStateSummary,
+                    `${path}.currentStateSummary`,
+                    1500
+                ),
+                remainingWorkSummary: requiredString(
+                    workPackage.remainingWorkSummary,
+                    `${path}.remainingWorkSummary`,
+                    1500
+                ),
+                dependencySummary: requiredString(
+                    workPackage.dependencySummary,
+                    `${path}.dependencySummary`,
+                    1500
+                ),
+                dependencyRules: normalizeDependencyRules(workPackage.dependencyRules, `${path}.dependencyRules`),
+                deliveryEstimate: normalizeDeliveryEstimate(
+                    workPackage.deliveryEstimate,
+                    `${path}.deliveryEstimate`,
+                    mappedTopicIds
+                )
+            });
+        }
+        return normalized;
     });
     uniqueIds(workPackages, 'releasePlan.workPackages');
     const workPackageIds = new Set(workPackages.map(workPackage => workPackage.id));
@@ -603,6 +862,18 @@ function normalizeReleasePlan(input, topicIds) {
         workPackage.dependencies.forEach(dependency => {
             if (!workPackageIds.has(dependency)) {
                 throw new Error(`releasePlan.workPackages[${index}] dipende dal work package sconosciuto ${dependency}.`);
+            }
+        });
+        (workPackage.dependencyRules || []).forEach(rule => {
+            if (!workPackageIds.has(rule.workPackageId)) {
+                throw new Error(
+                    `releasePlan.workPackages[${index}].dependencyRules usa il work package sconosciuto ${rule.workPackageId}.`
+                );
+            }
+            if (!workPackage.dependencies.includes(rule.workPackageId)) {
+                throw new Error(
+                    `releasePlan.workPackages[${index}].dependencyRules non è coerente con dependencies.`
+                );
             }
         });
     });
@@ -717,6 +988,60 @@ function normalizeReleasePlan(input, topicIds) {
         workPackageIds: criticalWorkPackages,
         gateIds: criticalGates
     };
+    if (hasAdaptiveDelivery) {
+        const primaryChainWorkPackageIds = normalizeStringList(
+            criticalPathInput.primaryChainWorkPackageIds,
+            'releasePlan.criticalPath.primaryChainWorkPackageIds',
+            120
+        ).map((workPackageId, index) => validId(
+            workPackageId,
+            `releasePlan.criticalPath.primaryChainWorkPackageIds[${index}]`
+        ));
+        const parallelMandatoryWorkPackageIds = normalizeStringList(
+            criticalPathInput.parallelMandatoryWorkPackageIds,
+            'releasePlan.criticalPath.parallelMandatoryWorkPackageIds',
+            120
+        ).map((workPackageId, index) => validId(
+            workPackageId,
+            `releasePlan.criticalPath.parallelMandatoryWorkPackageIds[${index}]`
+        ));
+        [...primaryChainWorkPackageIds, ...parallelMandatoryWorkPackageIds].forEach(workPackageId => {
+            if (!workPackageIds.has(workPackageId)) {
+                throw new Error(`releasePlan.criticalPath usa il work package sconosciuto ${workPackageId}.`);
+            }
+        });
+        const convergingBranches = requireArray(
+            criticalPathInput.convergingBranches,
+            'releasePlan.criticalPath.convergingBranches'
+        ).map((branch, index) => {
+            const path = `releasePlan.criticalPath.convergingBranches[${index}]`;
+            requireObject(branch, path);
+            const branchWorkPackageIds = normalizeStringList(branch.workPackageIds, `${path}.workPackageIds`, 120)
+                .map((workPackageId, workPackageIndex) => validId(
+                    workPackageId,
+                    `${path}.workPackageIds[${workPackageIndex}]`
+                ));
+            branchWorkPackageIds.forEach(workPackageId => {
+                if (!workPackageIds.has(workPackageId)) {
+                    throw new Error(`${path} usa il work package sconosciuto ${workPackageId}.`);
+                }
+            });
+            const joinsAt = validId(branch.joinsAt, `${path}.joinsAt`);
+            if (!gateIds.has(joinsAt)) throw new Error(`${path}.joinsAt usa il gate sconosciuto ${joinsAt}.`);
+            return {
+                id: validId(branch.id, `${path}.id`),
+                label: requiredString(branch.label, `${path}.label`, 240),
+                workPackageIds: branchWorkPackageIds,
+                joinsAt
+            };
+        });
+        uniqueIds(convergingBranches, 'releasePlan.criticalPath.convergingBranches');
+        Object.assign(criticalPath, {
+            primaryChainWorkPackageIds,
+            parallelMandatoryWorkPackageIds,
+            convergingBranches
+        });
+    }
 
     const risks = requireArray(source.risks, 'releasePlan.risks').map((risk, index) => {
         const path = `releasePlan.risks[${index}]`;
@@ -763,11 +1088,12 @@ function normalizeReleasePlan(input, topicIds) {
     });
 
     return {
-        schemaVersion: RELEASE_PLAN_SCHEMA_VERSION,
+        schemaVersion: releasePlanSchemaVersion,
         sourceSnapshot,
         methodology,
         capacity,
         scopes,
+        ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
         workPackages,
         gates,
         milestones,
