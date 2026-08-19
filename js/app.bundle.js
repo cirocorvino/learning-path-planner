@@ -6,6 +6,20 @@
         const DATABASE_KIND = 'learning-planner-database';
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
+        const RELEASE_DATABASE_SCHEMA_VERSION = 3;
+        const RELEASE_PLAN_SCHEMA_VERSION = 1;
+
+        const RELEASE_STATUSES = [
+            'complete',
+            'validation',
+            'in_progress',
+            'partial',
+            'config_gated',
+            'blocked',
+            'not_started',
+            'future',
+            'superseded'
+        ];
 
         const DAY_KEYS = [
             'monday',
@@ -193,6 +207,40 @@
                 throw new Error(`${path} deve essere un numero positivo${integer ? ' intero' : ''}.`);
             }
             return number;
+        }
+
+        function finiteNonNegative(value, path, { integer = false } = {}) {
+            const number = Number(value);
+            if (!Number.isFinite(number) || number < 0 || (integer && !Number.isInteger(number))) {
+                throw new Error(`${path} deve essere un numero non negativo${integer ? ' intero' : ''}.`);
+            }
+            return number;
+        }
+
+        function validPercentage(value, path) {
+            const number = finiteNonNegative(value, path);
+            if (number > 100) {
+                throw new Error(`${path} deve essere compreso tra 0 e 100.`);
+            }
+            return Math.round(number * 10) / 10;
+        }
+
+        function optionalDate(value, path) {
+            const normalized = String(value ?? '').trim();
+            return normalized ? validDate(normalized, path) : '';
+        }
+
+        function validStatus(value, path) {
+            const status = String(value || 'not_started');
+            if (!RELEASE_STATUSES.includes(status)) {
+                throw new Error(`${path} non è supportato.`);
+            }
+            return status;
+        }
+
+        function normalizeStringList(input, path, maxLength = 500) {
+            const values = Array.isArray(input) ? input : [];
+            return values.map((value, index) => requiredString(value, `${path}[${index}]`, maxLength));
         }
 
         function uniqueIds(items, path) {
@@ -388,13 +436,365 @@
             return result;
         }
 
+        function normalizeReleaseEvidence(input, path) {
+            return (Array.isArray(input) ? input : []).map((item, index) => {
+                const itemPath = `${path}[${index}]`;
+                requireObject(item, itemPath);
+                return {
+                    type: optionalString(item.type || 'repository', 60) || 'repository',
+                    reference: requiredString(item.reference, `${itemPath}.reference`, 240),
+                    summary: requiredString(item.summary, `${itemPath}.summary`, 1000),
+                    observedAt: optionalDate(item.observedAt, `${itemPath}.observedAt`)
+                };
+            });
+        }
+
+        function calculateReleaseScopeProgress(releasePlan, scopeId) {
+            const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
+            const weightedProgress = workPackages.reduce((total, workPackage) => {
+                const weight = Number(workPackage.weights?.[scopeId]) || 0;
+                return total + weight * (Number(workPackage.completionPercent) || 0) / 100;
+            }, 0);
+            return Math.round(weightedProgress * 10) / 10;
+        }
+
+        function normalizeReleasePlan(input, topicIds) {
+            const source = requireObject(input, 'releasePlan');
+            if (Number(source.schemaVersion) !== RELEASE_PLAN_SCHEMA_VERSION) {
+                throw new Error(`Versione release plan non supportata: ${source.schemaVersion}.`);
+            }
+
+            const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
+            const sourceSnapshot = {
+                assessedAt: validDate(sourceSnapshotInput.assessedAt, 'releasePlan.sourceSnapshot.assessedAt'),
+                repository: requiredString(sourceSnapshotInput.repository, 'releasePlan.sourceSnapshot.repository', 240),
+                branch: requiredString(sourceSnapshotInput.branch, 'releasePlan.sourceSnapshot.branch', 120),
+                commit: requiredString(sourceSnapshotInput.commit, 'releasePlan.sourceSnapshot.commit', 80),
+                canonicalProgressSource: requiredString(
+                    sourceSnapshotInput.canonicalProgressSource,
+                    'releasePlan.sourceSnapshot.canonicalProgressSource',
+                    300
+                ),
+                canonicalSnapshotAt: optionalDate(
+                    sourceSnapshotInput.canonicalSnapshotAt,
+                    'releasePlan.sourceSnapshot.canonicalSnapshotAt'
+                ),
+                githubStateAt: optionalDate(sourceSnapshotInput.githubStateAt, 'releasePlan.sourceSnapshot.githubStateAt'),
+                productMandateAt: optionalDate(sourceSnapshotInput.productMandateAt, 'releasePlan.sourceSnapshot.productMandateAt'),
+                publicationStatus: requiredString(
+                    sourceSnapshotInput.publicationStatus,
+                    'releasePlan.sourceSnapshot.publicationStatus',
+                    80
+                ),
+                notes: optionalString(sourceSnapshotInput.notes, 2000)
+            };
+
+            const capacityInput = requireObject(source.capacity, 'releasePlan.capacity');
+            const capacity = {
+                basis: requiredString(capacityInput.basis, 'releasePlan.capacity.basis', 160),
+                effectiveFrom: validDate(capacityInput.effectiveFrom, 'releasePlan.capacity.effectiveFrom'),
+                grossWeeklyMinutes: finitePositive(
+                    capacityInput.grossWeeklyMinutes,
+                    'releasePlan.capacity.grossWeeklyMinutes',
+                    { integer: true }
+                ),
+                plannedWeeklyMinutes: finitePositive(
+                    capacityInput.plannedWeeklyMinutes,
+                    'releasePlan.capacity.plannedWeeklyMinutes',
+                    { integer: true }
+                ),
+                reserveWeeklyMinutes: finiteNonNegative(
+                    capacityInput.reserveWeeklyMinutes,
+                    'releasePlan.capacity.reserveWeeklyMinutes',
+                    { integer: true }
+                ),
+                calibrationWindowWeeks: finitePositive(
+                    capacityInput.calibrationWindowWeeks,
+                    'releasePlan.capacity.calibrationWindowWeeks',
+                    { integer: true }
+                ),
+                officialLimitEvidence: requiredString(
+                    capacityInput.officialLimitEvidence,
+                    'releasePlan.capacity.officialLimitEvidence',
+                    500
+                ),
+                empiricalBaseline: requiredString(
+                    capacityInput.empiricalBaseline,
+                    'releasePlan.capacity.empiricalBaseline',
+                    1000
+                ),
+                assumptions: normalizeStringList(capacityInput.assumptions, 'releasePlan.capacity.assumptions', 1000)
+            };
+            if (capacity.plannedWeeklyMinutes + capacity.reserveWeeklyMinutes > capacity.grossWeeklyMinutes) {
+                throw new Error('La capacità pianificata e la riserva superano la capacità settimanale lorda.');
+            }
+
+            const methodologyInput = requireObject(source.methodology, 'releasePlan.methodology');
+            const methodology = {
+                calculation: requiredString(methodologyInput.calculation, 'releasePlan.methodology.calculation', 1000),
+                evidenceRule: requiredString(methodologyInput.evidenceRule, 'releasePlan.methodology.evidenceRule', 1000),
+                denominatorRule: requiredString(methodologyInput.denominatorRule, 'releasePlan.methodology.denominatorRule', 1000),
+                scale: normalizeStringList(methodologyInput.scale, 'releasePlan.methodology.scale', 500)
+            };
+
+            const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
+                const path = `releasePlan.scopes[${index}]`;
+                requireObject(scope, path);
+                return {
+                    id: validId(scope.id, `${path}.id`),
+                    label: requiredString(scope.label, `${path}.label`, 160),
+                    version: requiredString(scope.version, `${path}.version`, 80),
+                    denominatorVersion: requiredString(scope.denominatorVersion, `${path}.denominatorVersion`, 120),
+                    reportedCompletionPercent: validPercentage(
+                        scope.reportedCompletionPercent,
+                        `${path}.reportedCompletionPercent`
+                    ),
+                    lastReviewedAt: validDate(scope.lastReviewedAt, `${path}.lastReviewedAt`),
+                    status: requiredString(scope.status || 'provisional', `${path}.status`, 80),
+                    perimeter: requiredString(scope.perimeter, `${path}.perimeter`, 1200),
+                    canonicalSource: requiredString(scope.canonicalSource, `${path}.canonicalSource`, 300),
+                    notes: optionalString(scope.notes, 2000)
+                };
+            });
+            uniqueIds(scopes, 'releasePlan.scopes');
+            const scopeIds = new Set(scopes.map(scope => scope.id));
+
+            const workPackages = requireArray(source.workPackages, 'releasePlan.workPackages').map((workPackage, index) => {
+                const path = `releasePlan.workPackages[${index}]`;
+                requireObject(workPackage, path);
+                const weightsInput = workPackage.weights && typeof workPackage.weights === 'object'
+                    ? workPackage.weights
+                    : {};
+                Object.keys(weightsInput).forEach(scopeId => {
+                    if (!scopeIds.has(scopeId)) {
+                        throw new Error(`${path}.weights contiene lo scope sconosciuto ${scopeId}.`);
+                    }
+                });
+                const mappedTopicIds = normalizeStringList(workPackage.topicIds, `${path}.topicIds`, 120)
+                    .map((topicId, topicIndex) => validId(topicId, `${path}.topicIds[${topicIndex}]`));
+                mappedTopicIds.forEach(topicId => {
+                    if (!topicIds.has(topicId)) {
+                        throw new Error(`${path}.topicIds contiene l'argomento sconosciuto ${topicId}.`);
+                    }
+                });
+                return {
+                    id: validId(workPackage.id, `${path}.id`),
+                    title: requiredString(workPackage.title, `${path}.title`, 240),
+                    description: requiredString(workPackage.description, `${path}.description`, 1500),
+                    status: validStatus(workPackage.status, `${path}.status`),
+                    completionPercent: validPercentage(workPackage.completionPercent, `${path}.completionPercent`),
+                    weights: Object.fromEntries([...scopeIds].map(scopeId => [
+                        scopeId,
+                        finiteNonNegative(weightsInput[scopeId] ?? 0, `${path}.weights.${scopeId}`)
+                    ])),
+                    topicIds: mappedTopicIds,
+                    dependencies: normalizeStringList(workPackage.dependencies, `${path}.dependencies`, 120)
+                        .map((dependency, dependencyIndex) => validId(dependency, `${path}.dependencies[${dependencyIndex}]`)),
+                    issueRefs: normalizeStringList(workPackage.issueRefs, `${path}.issueRefs`, 120),
+                    criticalPath: workPackage.criticalPath === true,
+                    owner: requiredString(workPackage.owner, `${path}.owner`, 160),
+                    lastReviewedAt: validDate(workPackage.lastReviewedAt, `${path}.lastReviewedAt`),
+                    evidence: normalizeReleaseEvidence(workPackage.evidence, `${path}.evidence`),
+                    acceptanceSummary: requiredString(
+                        workPackage.acceptanceSummary,
+                        `${path}.acceptanceSummary`,
+                        1500
+                    )
+                };
+            });
+            uniqueIds(workPackages, 'releasePlan.workPackages');
+            const workPackageIds = new Set(workPackages.map(workPackage => workPackage.id));
+            workPackages.forEach((workPackage, index) => {
+                workPackage.dependencies.forEach(dependency => {
+                    if (!workPackageIds.has(dependency)) {
+                        throw new Error(`releasePlan.workPackages[${index}] dipende dal work package sconosciuto ${dependency}.`);
+                    }
+                });
+            });
+
+            scopes.forEach((scope, index) => {
+                const totalWeight = workPackages.reduce((total, workPackage) => total + workPackage.weights[scope.id], 0);
+                if (Math.abs(totalWeight - 100) > 0.01) {
+                    throw new Error(`I pesi di releasePlan.scopes[${index}] sommano ${totalWeight}, atteso 100.`);
+                }
+                const calculated = calculateReleaseScopeProgress({ workPackages }, scope.id);
+                if (Math.abs(calculated - scope.reportedCompletionPercent) > 0.05) {
+                    throw new Error(
+                        `La percentuale dichiarata per ${scope.id} (${scope.reportedCompletionPercent}) diverge dal calcolo (${calculated}).`
+                    );
+                }
+            });
+
+            const gates = requireArray(source.gates, 'releasePlan.gates').map((gate, index) => {
+                const path = `releasePlan.gates[${index}]`;
+                requireObject(gate, path);
+                const requiredFor = normalizeStringList(gate.requiredFor, `${path}.requiredFor`, 120)
+                    .map((scopeId, scopeIndex) => validId(scopeId, `${path}.requiredFor[${scopeIndex}]`));
+                requiredFor.forEach(scopeId => {
+                    if (!scopeIds.has(scopeId)) throw new Error(`${path}.requiredFor contiene lo scope sconosciuto ${scopeId}.`);
+                });
+                return {
+                    id: validId(gate.id, `${path}.id`),
+                    title: requiredString(gate.title, `${path}.title`, 240),
+                    status: validStatus(gate.status, `${path}.status`),
+                    owner: requiredString(gate.owner, `${path}.owner`, 160),
+                    requiredFor,
+                    criteria: normalizeStringList(gate.criteria, `${path}.criteria`, 1000),
+                    evidence: normalizeStringList(gate.evidence, `${path}.evidence`, 1000),
+                    decision: optionalString(gate.decision, 1000),
+                    lastReviewedAt: validDate(gate.lastReviewedAt, `${path}.lastReviewedAt`)
+                };
+            });
+            uniqueIds(gates, 'releasePlan.gates');
+            const gateIds = new Set(gates.map(gate => gate.id));
+
+            const forecasts = requireArray(source.forecasts, 'releasePlan.forecasts').map((forecast, index) => {
+                const path = `releasePlan.forecasts[${index}]`;
+                requireObject(forecast, path);
+                const theoreticalDate = validDate(forecast.theoreticalDate, `${path}.theoreticalDate`);
+                const realisticStart = validDate(forecast.realisticStart, `${path}.realisticStart`);
+                const realisticEnd = validDate(forecast.realisticEnd, `${path}.realisticEnd`);
+                const prudentStart = validDate(forecast.prudentStart, `${path}.prudentStart`);
+                const prudentEnd = validDate(forecast.prudentEnd, `${path}.prudentEnd`);
+                if (realisticStart > realisticEnd || prudentStart > prudentEnd) {
+                    throw new Error(`${path} contiene un intervallo invertito.`);
+                }
+                return {
+                    id: validId(forecast.id, `${path}.id`),
+                    label: requiredString(forecast.label, `${path}.label`, 160),
+                    theoreticalDate,
+                    realisticStart,
+                    realisticEnd,
+                    prudentStart,
+                    prudentEnd,
+                    commitmentStatus: requiredString(forecast.commitmentStatus, `${path}.commitmentStatus`, 120),
+                    assumptions: normalizeStringList(forecast.assumptions, `${path}.assumptions`, 1000)
+                };
+            });
+            uniqueIds(forecasts, 'releasePlan.forecasts');
+            const forecastIds = new Set(forecasts.map(forecast => forecast.id));
+
+            const milestones = requireArray(source.milestones, 'releasePlan.milestones').map((milestone, index) => {
+                const path = `releasePlan.milestones[${index}]`;
+                requireObject(milestone, path);
+                const forecastId = optionalString(milestone.forecastId, 120);
+                if (forecastId && !forecastIds.has(forecastId)) {
+                    throw new Error(`${path}.forecastId contiene il forecast sconosciuto ${forecastId}.`);
+                }
+                const milestoneGateIds = normalizeStringList(milestone.gateIds, `${path}.gateIds`, 120)
+                    .map((gateId, gateIndex) => validId(gateId, `${path}.gateIds[${gateIndex}]`));
+                milestoneGateIds.forEach(gateId => {
+                    if (!gateIds.has(gateId)) throw new Error(`${path}.gateIds contiene il gate sconosciuto ${gateId}.`);
+                });
+                return {
+                    id: validId(milestone.id, `${path}.id`),
+                    title: requiredString(milestone.title, `${path}.title`, 240),
+                    status: validStatus(milestone.status, `${path}.status`),
+                    kind: requiredString(milestone.kind, `${path}.kind`, 80),
+                    forecastId,
+                    gateIds: milestoneGateIds,
+                    description: requiredString(milestone.description, `${path}.description`, 1000)
+                };
+            });
+            uniqueIds(milestones, 'releasePlan.milestones');
+
+            const criticalPathInput = requireObject(source.criticalPath, 'releasePlan.criticalPath');
+            const criticalWorkPackages = normalizeStringList(
+                criticalPathInput.workPackageIds,
+                'releasePlan.criticalPath.workPackageIds',
+                120
+            ).map((workPackageId, index) => validId(workPackageId, `releasePlan.criticalPath.workPackageIds[${index}]`));
+            criticalWorkPackages.forEach(workPackageId => {
+                if (!workPackageIds.has(workPackageId)) {
+                    throw new Error(`releasePlan.criticalPath contiene il work package sconosciuto ${workPackageId}.`);
+                }
+            });
+            const criticalGates = normalizeStringList(
+                criticalPathInput.gateIds,
+                'releasePlan.criticalPath.gateIds',
+                120
+            ).map((gateId, index) => validId(gateId, `releasePlan.criticalPath.gateIds[${index}]`));
+            criticalGates.forEach(gateId => {
+                if (!gateIds.has(gateId)) throw new Error(`releasePlan.criticalPath contiene il gate sconosciuto ${gateId}.`);
+            });
+            const criticalPath = {
+                summary: requiredString(criticalPathInput.summary, 'releasePlan.criticalPath.summary', 1500),
+                workPackageIds: criticalWorkPackages,
+                gateIds: criticalGates
+            };
+
+            const risks = requireArray(source.risks, 'releasePlan.risks').map((risk, index) => {
+                const path = `releasePlan.risks[${index}]`;
+                requireObject(risk, path);
+                return {
+                    id: validId(risk.id, `${path}.id`),
+                    title: requiredString(risk.title, `${path}.title`, 240),
+                    level: requiredString(risk.level, `${path}.level`, 40),
+                    owner: requiredString(risk.owner, `${path}.owner`, 160),
+                    trigger: requiredString(risk.trigger, `${path}.trigger`, 1000),
+                    mitigation: requiredString(risk.mitigation, `${path}.mitigation`, 1500),
+                    decisionNeeded: optionalString(risk.decisionNeeded, 1000)
+                };
+            });
+            uniqueIds(risks, 'releasePlan.risks');
+
+            const changeHistory = requireArray(source.changeHistory, 'releasePlan.changeHistory').map((change, index) => {
+                const path = `releasePlan.changeHistory[${index}]`;
+                requireObject(change, path);
+                return {
+                    date: validDate(change.date, `${path}.date`),
+                    kind: requiredString(change.kind, `${path}.kind`, 80),
+                    summary: requiredString(change.summary, `${path}.summary`, 1500),
+                    scopeIds: normalizeStringList(change.scopeIds, `${path}.scopeIds`, 120),
+                    from: optionalString(change.from, 500),
+                    to: optionalString(change.to, 500),
+                    evidence: optionalString(change.evidence, 1000)
+                };
+            });
+
+            const scopeChanges = requireArray(source.scopeChanges, 'releasePlan.scopeChanges').map((change, index) => {
+                const path = `releasePlan.scopeChanges[${index}]`;
+                requireObject(change, path);
+                const scopeId = validId(change.scopeId, `${path}.scopeId`);
+                if (!scopeIds.has(scopeId)) throw new Error(`${path}.scopeId contiene lo scope sconosciuto ${scopeId}.`);
+                return {
+                    date: validDate(change.date, `${path}.date`),
+                    scopeId,
+                    fromVersion: requiredString(change.fromVersion, `${path}.fromVersion`, 120),
+                    toVersion: requiredString(change.toVersion, `${path}.toVersion`, 120),
+                    change: requiredString(change.change, `${path}.change`, 1500),
+                    denominatorImpact: requiredString(change.denominatorImpact, `${path}.denominatorImpact`, 1000)
+                };
+            });
+
+            return {
+                schemaVersion: RELEASE_PLAN_SCHEMA_VERSION,
+                sourceSnapshot,
+                methodology,
+                capacity,
+                scopes,
+                workPackages,
+                gates,
+                milestones,
+                forecasts,
+                criticalPath,
+                risks,
+                changeHistory,
+                scopeChanges
+            };
+        }
+
         function normalizeV2Database(input) {
             const source = requireObject(input, 'database');
             if (source.kind !== DATABASE_KIND) {
                 throw new Error(`Tipo di database non supportato: ${source.kind || '(mancante)'}.`);
             }
-            if (Number(source.schemaVersion) !== SCHEMA_VERSION) {
+            const databaseSchemaVersion = Number(source.schemaVersion);
+            if (![SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION].includes(databaseSchemaVersion)) {
                 throw new Error(`Versione database non supportata: ${source.schemaVersion}.`);
+            }
+            if (databaseSchemaVersion === RELEASE_DATABASE_SCHEMA_VERSION && !source.releasePlan) {
+                throw new Error('Un database v3 deve contenere releasePlan.');
             }
 
             const metadata = requireObject(source.metadata, 'metadata');
@@ -403,9 +803,9 @@
             const plan = normalizePlan(source.plan);
             const topicIds = new Set(plan.modules.flatMap(module => module.topics).map(topic => topic.id));
 
-            return {
+            const normalized = {
                 kind: DATABASE_KIND,
-                schemaVersion: SCHEMA_VERSION,
+                schemaVersion: databaseSchemaVersion,
                 metadata: {
                     id: validId(metadata.id || createId('database'), 'metadata.id'),
                     name: requiredString(metadata.name, 'metadata.name', 160),
@@ -428,6 +828,10 @@
                     progress: normalizeProgress(source.state?.progress, topicIds)
                 }
             };
+            if (source.releasePlan) {
+                normalized.releasePlan = normalizeReleasePlan(source.releasePlan, topicIds);
+            }
+            return normalized;
         }
 
         function inferLegacyKind(name) {
@@ -640,10 +1044,14 @@
             return updateDatabase(database, draft => {
                 draft.plan = plan;
                 draft.state = { progress: {} };
+                if (draft.releasePlan) {
+                    delete draft.releasePlan;
+                    draft.schemaVersion = SCHEMA_VERSION;
+                }
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeProgress, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
@@ -1757,7 +2165,7 @@
     })();
 
     (() => {
-        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId, databaseHasContent } = modelApi;
+        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
@@ -1781,6 +2189,17 @@
             'weeklyCapacity',
             'endDate',
             'plannerWarnings',
+            'releaseDashboard',
+            'releaseSourceSummary',
+            'releaseCapacitySummary',
+            'releaseScopeCards',
+            'releaseCriticalSummary',
+            'releaseCriticalPath',
+            'releaseForecasts',
+            'releaseWorkPackages',
+            'releaseGates',
+            'releaseMilestones',
+            'releaseHistory',
             'planPeriod',
             'ganttTable',
             'ganttRows',
@@ -1826,6 +2245,18 @@
             focus: 'Focus / pianificabile',
             busy: 'Impegno',
             neutral: 'Neutra'
+        };
+
+        const RELEASE_STATUS_LABELS = {
+            complete: 'Completato',
+            validation: 'In validazione',
+            in_progress: 'In corso',
+            partial: 'Parziale',
+            config_gated: 'Pronto ma non attivo',
+            blocked: 'Bloccato',
+            not_started: 'Non iniziato',
+            future: 'Futuro',
+            superseded: 'Superato'
         };
 
         let currentDatabase = null;
@@ -1911,8 +2342,217 @@
             elements.saveDatabaseButton.disabled = false;
 
             renderOverview();
+            renderReleaseDashboard();
             renderGantt();
             renderSelectedWeek();
+        }
+
+        function releaseStatusBadge(status) {
+            return createElement('span', {
+                className: `release-status release-status--${status}`,
+                text: RELEASE_STATUS_LABELS[status] || status
+            });
+        }
+
+        function releaseWorkPackageMap() {
+            const releasePlan = currentDatabase.releasePlan;
+            return new Map((releasePlan?.workPackages || []).map(workPackage => [workPackage.id, workPackage]));
+        }
+
+        function releaseWorkPackageForTopic(topicId) {
+            return currentDatabase.releasePlan?.workPackages.find(workPackage => workPackage.topicIds.includes(topicId)) || null;
+        }
+
+        function releaseDate(value, locale) {
+            return value ? formatDate(value, locale, { year: true }) : 'Non definita';
+        }
+
+        function renderReleaseDashboard() {
+            const releasePlan = currentDatabase.releasePlan;
+            setHidden(elements.releaseDashboard, !releasePlan);
+            if (!releasePlan) return;
+
+            const locale = currentDatabase.metadata.locale;
+            const source = releasePlan.sourceSnapshot;
+            elements.releaseSourceSummary.textContent = [
+                `${source.repository}@${source.commit}`,
+                `stato verificato ${releaseDate(source.assessedAt, locale)}`,
+                source.publicationStatus
+            ].join(' · ');
+            elements.releaseCapacitySummary.textContent = [
+                `${formatDuration(releasePlan.capacity.plannedWeeklyMinutes)} pianificate`,
+                `${formatDuration(releasePlan.capacity.reserveWeeklyMinutes)} di riserva`,
+                `${formatDuration(releasePlan.capacity.grossWeeklyMinutes)} lorde`,
+                `calibrazione ${releasePlan.capacity.calibrationWindowWeeks} settimane`
+            ].join(' · ');
+            elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
+
+            clear(elements.releaseScopeCards);
+            releasePlan.scopes.forEach(scope => {
+                const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+                const progress = createElement('progress', {
+                    attributes: { max: 100, value: calculated, 'aria-label': `${scope.label}: ${calculated}%` }
+                });
+                elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
+                    createElement('div', { className: 'release-scope__heading' }, [
+                        createElement('div', {}, [
+                            createElement('strong', { text: scope.label }),
+                            createElement('span', { className: 'release-scope__version', text: scope.denominatorVersion })
+                        ]),
+                        createElement('span', { className: 'release-scope__percent', text: `${calculated.toFixed(1)}%` })
+                    ]),
+                    progress,
+                    createElement('p', { className: 'muted', text: scope.perimeter }),
+                    createElement('small', {
+                        text: `${scope.status} · revisione ${releaseDate(scope.lastReviewedAt, locale)}`
+                    })
+                ]));
+            });
+
+            const workPackageById = releaseWorkPackageMap();
+            clear(elements.releaseCriticalPath);
+            elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
+            releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
+                const workPackage = workPackageById.get(workPackageId);
+                if (!workPackage) return;
+                elements.releaseCriticalPath.append(createElement('li', {}, [
+                    createElement('span', { text: workPackage.title }),
+                    releaseStatusBadge(workPackage.status),
+                    createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+                ]));
+            });
+
+            clear(elements.releaseForecasts);
+            releasePlan.forecasts.forEach(forecast => {
+                elements.releaseForecasts.append(createElement('article', { className: 'forecast' }, [
+                    createElement('strong', { text: forecast.label }),
+                    createElement('dl', {}, [
+                        createElement('dt', { text: 'Minimo teorico' }),
+                        createElement('dd', { text: releaseDate(forecast.theoreticalDate, locale) }),
+                        createElement('dt', { text: 'Realistico' }),
+                        createElement('dd', {
+                            text: `${releaseDate(forecast.realisticStart, locale)} – ${releaseDate(forecast.realisticEnd, locale)}`
+                        }),
+                        createElement('dt', { text: 'Prudenziale' }),
+                        createElement('dd', {
+                            text: `${releaseDate(forecast.prudentStart, locale)} – ${releaseDate(forecast.prudentEnd, locale)}`
+                        })
+                    ]),
+                    createElement('small', { text: forecast.commitmentStatus })
+                ]));
+            });
+
+            clear(elements.releaseWorkPackages);
+            releasePlan.workPackages.forEach(workPackage => {
+                const title = createElement('div', { className: 'release-wp__title' }, [
+                    createElement('strong', { text: workPackage.title })
+                ]);
+                if (workPackage.criticalPath) {
+                    title.append(createElement('span', { className: 'release-tag', text: 'Percorso critico' }));
+                }
+                if (workPackage.issueRefs.length) {
+                    title.append(createElement('small', { text: workPackage.issueRefs.join(' · ') }));
+                }
+
+                const progress = createElement('progress', {
+                    attributes: {
+                        max: 100,
+                        value: workPackage.completionPercent,
+                        'aria-label': `${workPackage.title}: ${workPackage.completionPercent}%`
+                    }
+                });
+                const progressCell = createElement('div', { className: 'release-wp__progress' }, [
+                    createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
+                    progress
+                ]);
+                const weights = releasePlan.scopes
+                    .filter(scope => workPackage.weights[scope.id] > 0)
+                    .map(scope => `${scope.label}: ${workPackage.weights[scope.id]}`)
+                    .join(' · ') || 'Fuori perimetro';
+                const latestEvidence = workPackage.evidence.at(-1);
+                const evidence = createElement('div', { className: 'release-wp__evidence' }, [
+                    createElement('span', { text: latestEvidence?.summary || 'Nessuna evidenza registrata' }),
+                    createElement('small', {
+                        text: `${latestEvidence?.reference || '—'} · revisione ${releaseDate(workPackage.lastReviewedAt, locale)}`
+                    })
+                ]);
+
+                const row = createElement('tr');
+                row.append(
+                    createElement('td', { attributes: { 'data-label': 'Funzionalità' } }, [
+                        title,
+                        createElement('p', { text: workPackage.description })
+                    ]),
+                    createElement('td', { attributes: { 'data-label': 'Stato' } }, [
+                        releaseStatusBadge(workPackage.status)
+                    ]),
+                    createElement('td', { attributes: { 'data-label': 'Avanzamento' } }, [progressCell]),
+                    createElement('td', { text: weights, attributes: { 'data-label': 'Peso' } }),
+                    createElement('td', { attributes: { 'data-label': 'Evidenza' } }, [evidence])
+                );
+                elements.releaseWorkPackages.append(row);
+            });
+
+            clear(elements.releaseGates);
+            releasePlan.gates.forEach(gate => {
+                const criteria = createElement('ul');
+                gate.criteria.forEach(item => criteria.append(createElement('li', { text: item })));
+                const details = createElement('details', { className: 'release-detail' }, [
+                    createElement('summary', {}, [
+                        createElement('span', { text: gate.title }),
+                        releaseStatusBadge(gate.status)
+                    ]),
+                    criteria,
+                    createElement('small', {
+                        text: `${gate.owner} · revisione ${releaseDate(gate.lastReviewedAt, locale)}`
+                    })
+                ]);
+                elements.releaseGates.append(details);
+            });
+
+            const forecastById = new Map(releasePlan.forecasts.map(forecast => [forecast.id, forecast]));
+            clear(elements.releaseMilestones);
+            releasePlan.milestones.forEach(milestone => {
+                const forecast = forecastById.get(milestone.forecastId);
+                elements.releaseMilestones.append(createElement('article', { className: 'milestone' }, [
+                    createElement('div', {}, [
+                        createElement('strong', { text: milestone.title }),
+                        createElement('p', { text: milestone.description })
+                    ]),
+                    releaseStatusBadge(milestone.status),
+                    forecast
+                        ? createElement('small', {
+                            text: `Finestra realistica: ${releaseDate(forecast.realisticStart, locale)} – ${releaseDate(forecast.realisticEnd, locale)}`
+                        })
+                        : null
+                ]));
+            });
+
+            clear(elements.releaseHistory);
+            const historyEntries = [
+                ...releasePlan.changeHistory.map(change => ({
+                    date: change.date,
+                    title: change.kind,
+                    summary: change.summary,
+                    detail: [change.from && `Da: ${change.from}`, change.to && `A: ${change.to}`].filter(Boolean).join(' · ')
+                })),
+                ...releasePlan.scopeChanges.map(change => ({
+                    date: change.date,
+                    title: `Perimetro ${change.scopeId}`,
+                    summary: change.change,
+                    detail: `${change.fromVersion} → ${change.toVersion} · ${change.denominatorImpact}`
+                }))
+            ].sort((left, right) => right.date.localeCompare(left.date));
+            historyEntries.forEach(entry => {
+                elements.releaseHistory.append(createElement('article', {}, [
+                    createElement('time', { text: releaseDate(entry.date, locale), attributes: { datetime: entry.date } }),
+                    createElement('div', {}, [
+                        createElement('strong', { text: entry.title }),
+                        createElement('p', { text: entry.summary }),
+                        entry.detail ? createElement('small', { text: entry.detail }) : null
+                    ])
+                ]));
+            });
         }
 
         function renderOverview() {
@@ -1953,6 +2593,12 @@
             const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
 
             modules.forEach(module => {
+                const moduleWorkPackages = (currentDatabase.releasePlan?.workPackages || [])
+                    .filter(workPackage => workPackage.topicIds.some(topicId => module.topics.some(topic => topic.id === topicId)));
+                const moduleProgress = moduleWorkPackages.length
+                    ? Math.round(moduleWorkPackages.reduce((total, workPackage) => total + workPackage.completionPercent, 0) / moduleWorkPackages.length)
+                    : null;
+                const isCritical = moduleWorkPackages.some(workPackage => workPackage.criticalPath);
                 const row = createElement('div', {
                     className: 'gantt__row',
                     attributes: { role: 'row' }
@@ -1962,7 +2608,9 @@
                     createElement('span', { className: 'gantt__module-title', text: module.title }),
                     createElement('span', {
                         className: 'gantt__module-meta',
-                        text: module.mode === 'buffer' ? 'Pausa / buffer' : `${module.topics.length} argomenti`
+                        text: module.mode === 'buffer'
+                            ? 'Pausa / buffer'
+                            : `${module.topics.length} argomenti${moduleProgress === null ? '' : ` · ${moduleProgress}%`}${isCritical ? ' · percorso critico' : ''}`
                     })
                 ]);
 
@@ -2005,7 +2653,7 @@
                     const left = daysBetween(currentSchedule.startDate, module.startDate) / totalDays * 100;
                     const width = (daysBetween(module.startDate, module.endDate) + 1) / totalDays * 100;
                     const bar = createElement('button', {
-                        className: 'gantt__bar',
+                        className: `gantt__bar${isCritical ? ' gantt__bar--critical' : ''}`,
                         type: 'button',
                         title: `Apri ${module.title}`,
                         attributes: {
@@ -2094,9 +2742,10 @@
                 allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
             } else {
                 agenda.allocations.forEach(allocation => {
+                    const workPackage = releaseWorkPackageForTopic(allocation.topicId);
                     allocations.append(createElement('span', {
                         className: 'allocation-pill',
-                        text: `${allocation.title} · ${formatDuration(allocation.minutes)}`
+                        text: `${allocation.title} · ${formatDuration(allocation.minutes)}${workPackage ? ` · ${workPackage.completionPercent}%` : ''}`
                     }));
                 });
             }

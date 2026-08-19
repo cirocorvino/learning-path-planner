@@ -14,6 +14,9 @@ const modules = [
             'DATABASE_KIND',
             'PLAN_KIND',
             'SCHEMA_VERSION',
+            'RELEASE_DATABASE_SCHEMA_VERSION',
+            'RELEASE_PLAN_SCHEMA_VERSION',
+            'RELEASE_STATUSES',
             'DAY_KEYS',
             'TOPIC_KINDS',
             'CATEGORY_ROLES',
@@ -22,6 +25,7 @@ const modules = [
             'createEmptyWeekTemplate',
             'createEmptyDatabase',
             'databaseHasContent',
+            'calculateReleaseScopeProgress',
             'normalizeDatabase',
             'normalizePlanInput',
             'updateDatabase',
@@ -102,7 +106,7 @@ const modules = [
         name: null,
         file: 'js/app.js',
         prelude: [
-            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, createId, databaseHasContent } = modelApi;',
+            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'
