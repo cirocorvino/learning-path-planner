@@ -7,9 +7,9 @@
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
         const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-        const RELEASE_PLAN_SCHEMA_VERSION = 2;
+        const RELEASE_PLAN_SCHEMA_VERSION = 3;
 
-        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, RELEASE_PLAN_SCHEMA_VERSION];
+        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, RELEASE_PLAN_SCHEMA_VERSION];
         const DELIVERY_DEPENDENCY_TYPES = [
             'required_before_start',
             'overlap_after_design',
@@ -27,6 +27,13 @@
             'not_started',
             'future',
             'superseded'
+        ];
+
+        const RELEASE_READINESS_STATUSES = [
+            'ready',
+            'not_ready',
+            'partially_scheduled',
+            'not_assessed'
         ];
 
         const DAY_KEYS = [
@@ -242,6 +249,14 @@
             const status = String(value || 'not_started');
             if (!RELEASE_STATUSES.includes(status)) {
                 throw new Error(`${path} non è supportato.`);
+            }
+            return status;
+        }
+
+        function validReadinessStatus(value, path) {
+            const status = String(value || 'not_assessed');
+            if (!RELEASE_READINESS_STATUSES.includes(status)) {
+                throw new Error(`${path} non è uno stato di readiness supportato.`);
             }
             return status;
         }
@@ -527,7 +542,7 @@
                 if (!scopeIds.has(scopeId)) throw new Error(`${itemPath}.scopeId è sconosciuto.`);
                 return {
                     scopeId,
-                    status: requiredString(item.status, `${itemPath}.status`, 80),
+                    status: validReadinessStatus(item.status, `${itemPath}.status`),
                     summary: requiredString(item.summary, `${itemPath}.summary`, 1000)
                 };
             });
@@ -544,6 +559,63 @@
                 nextGateBlockers: normalizeStringList(source.nextGateBlockers, `${path}.nextGateBlockers`, 1000),
                 nextStep: requiredString(source.nextStep, `${path}.nextStep`, 1500),
                 readiness
+            };
+        }
+
+        function normalizeMetricSemantics(input, path) {
+            const source = requireObject(input, path);
+            const functionalCompletion = requireObject(source.functionalCompletion, `${path}.functionalCompletion`);
+            const releaseReadiness = requireObject(source.releaseReadiness, `${path}.releaseReadiness`);
+            const scheduleSnapshot = requireObject(source.scheduleSnapshot, `${path}.scheduleSnapshot`);
+            const moduleAggregation = requireObject(source.moduleAggregation, `${path}.moduleAggregation`);
+
+            return {
+                functionalCompletion: {
+                    label: requiredString(functionalCompletion.label, `${path}.functionalCompletion.label`, 160),
+                    formula: requiredString(functionalCompletion.formula, `${path}.functionalCompletion.formula`, 1000),
+                    comparisonRule: requiredString(
+                        functionalCompletion.comparisonRule,
+                        `${path}.functionalCompletion.comparisonRule`,
+                        1500
+                    ),
+                    visionShareFormula: requiredString(
+                        functionalCompletion.visionShareFormula,
+                        `${path}.functionalCompletion.visionShareFormula`,
+                        1000
+                    ),
+                    visionShareStatus: requiredString(
+                        functionalCompletion.visionShareStatus,
+                        `${path}.functionalCompletion.visionShareStatus`,
+                        120
+                    ),
+                    decisionRequired: requiredString(
+                        functionalCompletion.decisionRequired,
+                        `${path}.functionalCompletion.decisionRequired`,
+                        1500
+                    )
+                },
+                releaseReadiness: {
+                    label: requiredString(releaseReadiness.label, `${path}.releaseReadiness.label`, 160),
+                    rule: requiredString(releaseReadiness.rule, `${path}.releaseReadiness.rule`, 1000),
+                    blockingRule: requiredString(
+                        releaseReadiness.blockingRule,
+                        `${path}.releaseReadiness.blockingRule`,
+                        1000
+                    )
+                },
+                scheduleSnapshot: {
+                    label: requiredString(scheduleSnapshot.label, `${path}.scheduleSnapshot.label`, 160),
+                    rule: requiredString(scheduleSnapshot.rule, `${path}.scheduleSnapshot.rule`, 1000)
+                },
+                moduleAggregation: {
+                    label: requiredString(moduleAggregation.label, `${path}.moduleAggregation.label`, 160),
+                    formula: requiredString(moduleAggregation.formula, `${path}.moduleAggregation.formula`, 1000),
+                    interpretation: requiredString(
+                        moduleAggregation.interpretation,
+                        `${path}.moduleAggregation.interpretation`,
+                        1000
+                    )
+                }
             };
         }
 
@@ -673,6 +745,58 @@
             return Math.round(weightedProgress * 10) / 10;
         }
 
+        function releaseWorkPackagesForTopic(releasePlan, topicId) {
+            const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
+            return workPackages.filter(workPackage => workPackage.topicIds?.includes(topicId));
+        }
+
+        function summarizeModuleWorkPackageSnapshot(workPackages, topicIds) {
+            const topicIdSet = new Set(Array.isArray(topicIds) ? topicIds : []);
+            const seenIds = new Set();
+            const matchedWorkPackages = (Array.isArray(workPackages) ? workPackages : []).filter(workPackage => {
+                if (seenIds.has(workPackage.id)) return false;
+                if (!workPackage.topicIds?.some(topicId => topicIdSet.has(topicId))) return false;
+                seenIds.add(workPackage.id);
+                return true;
+            });
+            if (matchedWorkPackages.length === 0) {
+                return {
+                    workPackages: [],
+                    averageCompletionPercent: null,
+                    minimumCompletionPercent: null,
+                    maximumCompletionPercent: null
+                };
+            }
+
+            const completionValues = matchedWorkPackages.map(workPackage => Number(workPackage.completionPercent) || 0);
+            const average = completionValues.reduce((total, value) => total + value, 0) / completionValues.length;
+            return {
+                workPackages: matchedWorkPackages,
+                averageCompletionPercent: Math.round(average),
+                minimumCompletionPercent: Math.min(...completionValues),
+                maximumCompletionPercent: Math.max(...completionValues)
+            };
+        }
+
+        function summarizeScopeGateReadiness(releasePlan, scopeId) {
+            const applicableGates = (Array.isArray(releasePlan?.gates) ? releasePlan.gates : [])
+                .filter(gate => gate.requiredFor?.includes(scopeId));
+            const passedGates = applicableGates.filter(gate => gate.status === 'complete');
+            const declared = releasePlan?.releaseStatus?.readiness?.find(item => item.scopeId === scopeId) || null;
+            const blockingGates = applicableGates.filter(gate => gate.status !== 'complete');
+            const declaredStatus = declared?.status || 'not_assessed';
+            const status = declaredStatus === 'ready' && (applicableGates.length === 0 || blockingGates.length > 0)
+                ? 'not_ready'
+                : declaredStatus;
+            return {
+                status,
+                summary: declared?.summary || 'Readiness non valutata.',
+                passedGateCount: passedGates.length,
+                applicableGateCount: applicableGates.length,
+                blockingGates
+            };
+        }
+
         function normalizeReleasePlan(input, topicIds) {
             const source = requireObject(input, 'releasePlan');
             const releasePlanSchemaVersion = Number(source.schemaVersion);
@@ -680,6 +804,7 @@
                 throw new Error(`Versione release plan non supportata: ${source.schemaVersion}.`);
             }
             const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
+            const hasMetricSemantics = releasePlanSchemaVersion >= 3;
 
             const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
             const sourceSnapshot = {
@@ -753,6 +878,9 @@
                 denominatorRule: requiredString(methodologyInput.denominatorRule, 'releasePlan.methodology.denominatorRule', 1000),
                 scale: normalizeStringList(methodologyInput.scale, 'releasePlan.methodology.scale', 500)
             };
+            const metricSemantics = hasMetricSemantics
+                ? normalizeMetricSemantics(source.metricSemantics, 'releasePlan.metricSemantics')
+                : null;
 
             const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
                 const path = `releasePlan.scopes[${index}]`;
@@ -918,6 +1046,19 @@
             });
             uniqueIds(gates, 'releasePlan.gates');
             const gateIds = new Set(gates.map(gate => gate.id));
+            if (releaseStatus) {
+                releaseStatus.readiness.forEach((item, index) => {
+                    if (item.status !== 'ready') return;
+                    const applicableGates = gates.filter(gate => gate.requiredFor.includes(item.scopeId));
+                    const blockingGates = applicableGates.filter(gate => gate.status !== 'complete');
+                    if (applicableGates.length === 0 || blockingGates.length > 0) {
+                        throw new Error(
+                            `releasePlan.releaseStatus.readiness[${index}] non può essere ready: `
+                            + 'tutti i gate applicabili devono esistere ed essere complete.'
+                        );
+                    }
+                });
+            }
 
             const forecasts = requireArray(source.forecasts, 'releasePlan.forecasts').map((forecast, index) => {
                 const path = `releasePlan.forecasts[${index}]`;
@@ -1098,6 +1239,7 @@
                 methodology,
                 capacity,
                 scopes,
+                ...(hasMetricSemantics ? { metricSemantics } : {}),
                 ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
                 workPackages,
                 gates,
@@ -1377,7 +1519,7 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeProgress, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeProgress, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
@@ -1753,6 +1895,74 @@
         }
 
         return { parseIsoDate, toIsoDate, addDays, daysBetween, getTimelineMonths, minutesBetween, effectiveTopicMinutes, moduleEffectiveMinutes, getWeeklyCapacity, getWeekTemplateForStart, getWeekCapacity, buildPlanSchedule, getModuleWeekAllocations, getWeekAgenda, formatDuration, formatDate, formatDayName };
+    })();
+
+    const releasePresentationApi = (() => {
+        const { releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
+        const { formatDate, formatDuration } = plannerApi;
+
+        function contributorViewModel(workPackage, locale) {
+            const snapshotDate = formatDate(workPackage.lastReviewedAt, locale, { year: true });
+            return {
+                id: workPackage.id,
+                title: workPackage.title,
+                completionPercent: workPackage.completionPercent,
+                criticalPath: workPackage.criticalPath === true,
+                snapshotDate,
+                text: `${workPackage.title}: ${workPackage.completionPercent}% · snapshot ${snapshotDate}`
+            };
+        }
+
+        function buildAllocationReleasePresentation(releasePlan, allocation, locale = 'it-IT') {
+            const duration = formatDuration(allocation.minutes);
+            if (!releasePlan) {
+                return {
+                    mode: 'legacy',
+                    text: `${allocation.title} · ${duration}`
+                };
+            }
+
+            const workPackages = releaseWorkPackagesForTopic(releasePlan, allocation.topicId);
+            const contributors = workPackages.map(workPackage => contributorViewModel(workPackage, locale));
+            let snapshotSummary;
+            if (contributors.length === 1) {
+                snapshotSummary = `${contributors[0].title} · ${contributors[0].completionPercent}% · snapshot ${contributors[0].snapshotDate}`;
+            } else if (contributors.length > 1) {
+                const completionValues = contributors.map(item => item.completionPercent);
+                snapshotSummary = `${contributors.length} WP · intervallo ${Math.min(...completionValues)}-${Math.max(...completionValues)}%`;
+            } else {
+                snapshotSummary = 'Nessun WP collegato';
+            }
+
+            return {
+                mode: 'release',
+                title: allocation.title,
+                plannedHoursText: `Ore pianificate: ${duration}`,
+                snapshotSummaryText: `Stato WP oggi: ${snapshotSummary}`,
+                contributors,
+                emptyContributorsText: 'Questa attività non contribuisce a uno snapshot funzionale.',
+                snapshotRule: releasePlan.metricSemantics?.scheduleSnapshot.rule
+                    || 'Lo stato WP è uno snapshot corrente: non misura il progresso della settimana e non cresce automaticamente nelle settimane future.'
+            };
+        }
+
+        function buildModuleWorkPackagePresentation(releasePlan, module, locale = 'it-IT') {
+            if (!releasePlan) return null;
+            const snapshot = summarizeModuleWorkPackageSnapshot(
+                releasePlan.workPackages,
+                module.topics.map(topic => topic.id)
+            );
+            if (snapshot.workPackages.length === 0) return null;
+
+            return {
+                averageCompletionPercent: snapshot.averageCompletionPercent,
+                summaryText: `Stato medio dei WP collegati: ${snapshot.averageCompletionPercent}%`,
+                explanationText: `${releasePlan.metricSemantics?.moduleAggregation.formula || 'Media aritmetica dei WP distinti collegati ai topic.'} ${releasePlan.metricSemantics?.moduleAggregation.interpretation || 'Non è avanzamento del modulo né forecast temporale.'}`,
+                contributors: snapshot.workPackages.map(workPackage => contributorViewModel(workPackage, locale))
+            };
+        }
+
+        return { buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
     })();
 
     const configurationApi = (() => {
@@ -2491,8 +2701,9 @@
     })();
 
     (() => {
-        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent } = modelApi;
+        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
+        const { buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -2519,6 +2730,7 @@
             'releaseSourceSummary',
             'releaseCapacitySummary',
             'releaseScopeCards',
+            'releaseMetricSemantics',
             'releaseStatusPanel',
             'releaseDeliveryTotals',
             'releaseStatusHeadline',
@@ -2590,6 +2802,13 @@
             not_started: 'Non iniziato',
             future: 'Futuro',
             superseded: 'Superato'
+        };
+
+        const RELEASE_READINESS_LABELS = {
+            ready: 'Pronto',
+            not_ready: 'Non pronto',
+            partially_scheduled: 'Parzialmente schedulato',
+            not_assessed: 'Non valutato'
         };
 
         const DELIVERY_PROFILE_LABELS = {
@@ -2710,13 +2929,16 @@
             });
         }
 
+        function releaseReadinessBadge(status) {
+            return createElement('span', {
+                className: `release-status release-status--${status}`,
+                text: RELEASE_READINESS_LABELS[status] || status
+            });
+        }
+
         function releaseWorkPackageMap() {
             const releasePlan = currentDatabase.releasePlan;
             return new Map((releasePlan?.workPackages || []).map(workPackage => [workPackage.id, workPackage]));
-        }
-
-        function releaseWorkPackageForTopic(topicId) {
-            return currentDatabase.releasePlan?.workPackages.find(workPackage => workPackage.topicIds.includes(topicId)) || null;
         }
 
         function releaseDate(value, locale) {
@@ -2760,8 +2982,18 @@
             clear(elements.releaseScopeCards);
             releasePlan.scopes.forEach(scope => {
                 const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+                const metricLabel = releasePlan.metricSemantics?.functionalCompletion.label
+                    || 'Avanzamento funzionale nello scope';
+                const readiness = summarizeScopeGateReadiness(releasePlan, scope.id);
+                const gateCount = readiness.applicableGateCount
+                    ? `${readiness.passedGateCount}/${readiness.applicableGateCount} gate superati`
+                    : 'Nessun gate applicabile registrato';
                 const progress = createElement('progress', {
-                    attributes: { max: 100, value: calculated, 'aria-label': `${scope.label}: ${calculated}%` }
+                    attributes: {
+                        max: 100,
+                        value: calculated,
+                        'aria-label': `${metricLabel}, ${scope.label}: ${calculated}%`
+                    }
                 });
                 elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
                     createElement('div', { className: 'release-scope__heading' }, [
@@ -2771,13 +3003,39 @@
                         ]),
                         createElement('span', { className: 'release-scope__percent', text: `${calculated.toFixed(1)}%` })
                     ]),
+                    createElement('span', { className: 'release-scope__metric-label', text: metricLabel }),
                     progress,
                     createElement('p', { className: 'muted', text: scope.perimeter }),
                     createElement('small', {
-                        text: `${scope.status} · revisione ${releaseDate(scope.lastReviewedAt, locale)}`
-                    })
+                        text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
+                    }),
+                    createElement('div', { className: 'release-scope__readiness' }, [
+                        createElement('span', { text: releasePlan.metricSemantics?.releaseReadiness.label || 'Readiness di rilascio' }),
+                        releaseReadinessBadge(readiness.status),
+                        createElement('small', { text: `${gateCount}. ${readiness.summary}` })
+                    ])
                 ]));
             });
+
+            const metricSemantics = releasePlan.metricSemantics;
+            setHidden(elements.releaseMetricSemantics, !metricSemantics);
+            clear(elements.releaseMetricSemantics);
+            if (metricSemantics) {
+                elements.releaseMetricSemantics.append(
+                    createElement('strong', { text: 'Come leggere queste misure' }),
+                    createElement('p', {
+                        text: `${metricSemantics.functionalCompletion.formula} ${metricSemantics.functionalCompletion.comparisonRule}`
+                    }),
+                    createElement('p', {
+                        className: 'muted',
+                        text: `Quota della Visione: ${metricSemantics.functionalCompletion.visionShareFormula} Stato: ${metricSemantics.functionalCompletion.visionShareStatus}.`
+                    }),
+                    createElement('p', {
+                        className: 'muted',
+                        text: `${metricSemantics.releaseReadiness.rule} ${metricSemantics.releaseReadiness.blockingRule}`
+                    })
+                );
+            }
 
             const releaseStatus = releasePlan.releaseStatus;
             setHidden(elements.releaseStatusPanel, !releaseStatus);
@@ -2807,7 +3065,10 @@
                 elements.releaseCriticalPath.append(createElement('li', {}, [
                     createElement('span', { text: workPackage.title }),
                     releaseStatusBadge(workPackage.status),
-                    createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+                    createElement('strong', {
+                        text: `Stato WP ${workPackage.completionPercent.toFixed(1)}%`,
+                        title: `Snapshot ${releaseDate(workPackage.lastReviewedAt, locale)}`
+                    })
                 ]));
             });
             clear(elements.releaseCriticalBranches);
@@ -2870,7 +3131,7 @@
                 ]);
                 const weights = releasePlan.scopes
                     .filter(scope => workPackage.weights[scope.id] > 0)
-                    .map(scope => `${scope.label}: ${workPackage.weights[scope.id]}`)
+                    .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
                     .join(' · ') || 'Fuori perimetro';
                 const latestEvidence = workPackage.evidence.at(-1);
                 const evidence = createElement('div', { className: 'release-wp__evidence' }, [
@@ -3049,25 +3310,35 @@
             const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
 
             modules.forEach(module => {
-                const moduleWorkPackages = (currentDatabase.releasePlan?.workPackages || [])
-                    .filter(workPackage => workPackage.topicIds.some(topicId => module.topics.some(topic => topic.id === topicId)));
-                const moduleProgress = moduleWorkPackages.length
-                    ? Math.round(moduleWorkPackages.reduce((total, workPackage) => total + workPackage.completionPercent, 0) / moduleWorkPackages.length)
-                    : null;
-                const isCritical = moduleWorkPackages.some(workPackage => workPackage.criticalPath);
+                const modulePresentation = buildModuleWorkPackagePresentation(currentDatabase.releasePlan, module, locale);
+                const isCritical = modulePresentation?.contributors.some(workPackage => workPackage.criticalPath) || false;
                 const row = createElement('div', {
                     className: 'gantt__row',
                     attributes: { role: 'row' }
                 });
 
+                const moduleSnapshotDetails = modulePresentation
+                    ? createElement('details', { className: 'gantt__wp-snapshot' }, [
+                        createElement('summary', {
+                            text: modulePresentation.summaryText
+                        }),
+                        createElement('p', {
+                            text: modulePresentation.explanationText
+                        }),
+                        createElement('ul', {}, modulePresentation.contributors.map(workPackage => createElement('li', {
+                            text: workPackage.text
+                        })))
+                    ])
+                    : null;
                 const identity = createElement('div', { attributes: { role: 'cell' } }, [
                     createElement('span', { className: 'gantt__module-title', text: module.title }),
                     createElement('span', {
                         className: 'gantt__module-meta',
                         text: module.mode === 'buffer'
                             ? 'Pausa / buffer'
-                            : `${module.topics.length} argomenti${moduleProgress === null ? '' : ` · ${moduleProgress}%`}${isCritical ? ' · percorso critico' : ''}`
-                    })
+                            : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
+                    }),
+                    moduleSnapshotDetails
                 ]);
 
                 const effort = createElement('div', { attributes: { role: 'cell' } }, [
@@ -3198,13 +3469,44 @@
                 allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
             } else {
                 agenda.allocations.forEach(allocation => {
-                    const workPackage = releaseWorkPackageForTopic(allocation.topicId);
-                    allocations.append(createElement('span', {
-                        className: 'allocation-pill',
-                        text: `${allocation.title} · ${formatDuration(allocation.minutes)}${workPackage ? ` · ${workPackage.completionPercent}%` : ''}`
-                    }));
+                    const presentation = buildAllocationReleasePresentation(
+                        currentDatabase.releasePlan,
+                        allocation,
+                        locale
+                    );
+                    if (presentation.mode === 'legacy') {
+                        allocations.append(createElement('span', {
+                            className: 'allocation-pill',
+                            text: presentation.text
+                        }));
+                        return;
+                    }
+                    const snapshotDetails = createElement('details', { className: 'allocation-pill__snapshot' }, [
+                        createElement('summary', { text: presentation.snapshotSummaryText }),
+                        presentation.contributors.length
+                            ? createElement('ul', {}, presentation.contributors.map(workPackage => createElement('li', {
+                                text: workPackage.text
+                            })))
+                            : createElement('p', { text: presentation.emptyContributorsText })
+                    ]);
+                    allocations.append(createElement('article', { className: 'allocation-pill' }, [
+                        createElement('strong', { text: presentation.title }),
+                        createElement('span', {
+                            className: 'allocation-pill__hours',
+                            text: presentation.plannedHoursText
+                        }),
+                        snapshotDetails
+                    ]));
                 });
             }
+
+            const snapshotNote = currentDatabase.releasePlan
+                ? createElement('p', {
+                    className: 'release-snapshot-note',
+                    text: currentDatabase.releasePlan.metricSemantics?.scheduleSnapshot.rule
+                        || 'Lo stato WP è uno snapshot corrente: non misura il progresso della settimana e non cresce automaticamente nelle settimane future.'
+                })
+                : null;
 
             const agendaGrid = createElement('div', { className: 'agenda' });
             agenda.days.forEach(day => {
@@ -3258,7 +3560,9 @@
                 agendaGrid.append(dayCard);
             });
 
-            elements.weekDetail.append(heading, tabs, allocations, agendaGrid);
+            elements.weekDetail.append(heading, tabs);
+            if (snapshotNote) elements.weekDetail.append(snapshotNote);
+            elements.weekDetail.append(allocations, agendaGrid);
             setHidden(elements.weekDetail, false);
         }
 

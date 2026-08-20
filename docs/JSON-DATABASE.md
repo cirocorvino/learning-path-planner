@@ -132,9 +132,10 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
   },
   "state": { "progress": {} },
   "releasePlan": {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "sourceSnapshot": {},
     "methodology": {},
+    "metricSemantics": {},
     "capacity": {},
     "scopes": [],
     "releaseStatus": {},
@@ -153,7 +154,7 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
 }
 ```
 
-Il formato `releasePlan` v1 resta leggibile. La v2 aggiunge un riepilogo in linguaggio comune, baseline originaria e forecast residuo, perimetro effettivamente schedulato e modello di coefficienti adattivi. In questo modo la completezza funzionale resta distinta dalla readiness al rilascio.
+I formati `releasePlan` v1 e v2 restano leggibili. La v2 aggiunge un riepilogo in linguaggio comune, baseline originaria e forecast residuo, perimetro effettivamente schedulato e modello di coefficienti adattivi. La v3 aggiunge `metricSemantics`, che dichiara formula e limiti dell'avanzamento funzionale, regola di readiness, significato degli snapshot settimanali e aggregazione dei WP nei moduli.
 
 Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze, eventuali topic del piano e un peso per ciascuno scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
 
@@ -161,7 +162,9 @@ Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, 
 
 `deliveryTotals` distingue ore attive, ore già registrate, residuo netto e durata del Gantt. La durata del Gantt può essere più lunga delle settimane nette quando i moduli restano blocchi settimanali conservativi o intervengono eccezioni di calendario; `ganttRule` deve dichiararlo esplicitamente. I lead time esterni non si sommano automaticamente alla durata del Gantt.
 
-Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo.
+Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo. Quando gli scope usano vettori di pesi rinormalizzati differenti, i risultati sono validi soltanto nel rispettivo denominatore e non sono direttamente confrontabili: `metricSemantics.functionalCompletion.comparisonRule` deve dichiararlo.
+
+La readiness non deriva dalla percentuale funzionale. Gli stati ammessi sono `ready`, `not_ready`, `partially_scheduled` e `not_assessed`. `ready` è accettato soltanto quando esiste almeno un gate applicabile e tutti i gate obbligatori dello scope sono `complete`; la validazione opera fail-closed. L'interfaccia mostra gate superati e applicabili insieme ai blocker. La futura quota di Visione realizzata richiede un vettore di pesi assoluti comune e una nuova `denominatorVersion`: non viene dedotta dal rapporto fra percentuali con denominatori diversi.
 
 Gli scope devono versionare il denominatore e indicare la fonte canonica. `changeHistory` registra le variazioni del piano; `scopeChanges` registra le modifiche di perimetro che rendono percentuali di versioni diverse non direttamente confrontabili. Gate, milestone, forecast e percorso critico sono validati rispetto agli ID dichiarati.
 

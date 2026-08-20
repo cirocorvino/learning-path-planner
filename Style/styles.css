@@ -283,7 +283,18 @@ code {
 .release-dashboard {
     display: grid;
     gap: 1rem;
+    min-width: 0;
+    max-width: 100%;
     margin: 1.25rem 0;
+}
+
+.release-dashboard > *,
+.release-dashboard__header > * {
+    min-width: 0;
+}
+
+#releaseSourceSummary {
+    overflow-wrap: anywhere;
 }
 
 .release-dashboard__header {
@@ -386,6 +397,14 @@ code {
     font-size: 0.76rem;
 }
 
+.release-scope__metric-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: #334155;
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
 .release-scope__percent {
     color: #0f766e;
     font-size: 1.45rem;
@@ -396,6 +415,39 @@ code {
     min-height: 3.6rem;
     margin: 0.75rem 0 0.5rem;
     font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.release-scope__readiness {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.35rem 0.75rem;
+    align-items: center;
+    margin-top: 0.8rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+}
+
+.release-scope__readiness > span:first-child {
+    color: #334155;
+    font-size: 0.76rem;
+    font-weight: 800;
+}
+
+.release-scope__readiness small {
+    grid-column: 1 / -1;
+    line-height: 1.4;
+}
+
+.release-metric-semantics {
+    padding: 0.85rem 1rem;
+    border-left: 0.25rem solid #0f766e;
+    background: #f0fdfa;
+    color: #134e4a;
+}
+
+.release-metric-semantics p {
+    margin: 0.35rem 0 0;
     line-height: 1.45;
 }
 
@@ -467,6 +519,22 @@ code {
 .release-status--complete {
     background: #dcfce7;
     color: #166534;
+}
+
+.release-status--not_ready {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.release-status--ready {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.release-status--partially_scheduled,
+.release-status--not_assessed {
+    background: #fef3c7;
+    color: #92400e;
 }
 
 .release-status--validation,
@@ -820,6 +888,28 @@ code {
     font-size: 0.82rem;
 }
 
+.gantt__wp-snapshot {
+    margin-top: 0.45rem;
+    color: #334155;
+    font-size: 0.76rem;
+}
+
+.gantt__wp-snapshot summary {
+    cursor: pointer;
+    font-weight: 750;
+    overflow-wrap: anywhere;
+}
+
+.gantt__wp-snapshot p,
+.gantt__wp-snapshot ul {
+    margin: 0.4rem 0 0;
+    line-height: 1.4;
+}
+
+.gantt__wp-snapshot ul {
+    padding-left: 1rem;
+}
+
 .gantt__track {
     position: relative;
     height: 2.2rem;
@@ -914,18 +1004,51 @@ code {
 }
 
 .allocation-list {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
     gap: 0.45rem;
     margin-bottom: 1rem;
 }
 
 .allocation-pill {
-    padding: 0.42rem 0.65rem;
-    border-radius: 999px;
+    display: grid;
+    gap: 0.35rem;
+    min-width: 0;
+    padding: 0.65rem 0.75rem;
+    border-radius: 0.5rem;
     background: #e0e7ff;
     color: #3730a3;
     font-size: 0.84rem;
+}
+
+.allocation-pill__hours {
+    color: #4338ca;
+    font-size: 0.78rem;
+    font-weight: 750;
+}
+
+.allocation-pill__snapshot summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 750;
+    overflow-wrap: anywhere;
+}
+
+.allocation-pill__snapshot ul,
+.allocation-pill__snapshot p {
+    margin: 0.4rem 0 0;
+    line-height: 1.4;
+}
+
+.allocation-pill__snapshot ul {
+    padding-left: 1rem;
+}
+
+.release-snapshot-note {
+    margin: 0 0 0.75rem;
+    color: #475569;
+    font-size: 0.82rem;
+    line-height: 1.45;
 }
 
 .agenda {
