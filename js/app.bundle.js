@@ -7,9 +7,9 @@
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
         const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-        const RELEASE_PLAN_SCHEMA_VERSION = 3;
+        const RELEASE_PLAN_SCHEMA_VERSION = 4;
 
-        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, RELEASE_PLAN_SCHEMA_VERSION];
+        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, RELEASE_PLAN_SCHEMA_VERSION];
         const DELIVERY_DEPENDENCY_TYPES = [
             'required_before_start',
             'overlap_after_design',
@@ -562,22 +562,42 @@
             };
         }
 
-        function normalizeMetricSemantics(input, path) {
+        function normalizeMetricSemantics(input, path, hasAbsoluteFunctionalWeights) {
             const source = requireObject(input, path);
             const functionalCompletion = requireObject(source.functionalCompletion, `${path}.functionalCompletion`);
             const releaseReadiness = requireObject(source.releaseReadiness, `${path}.releaseReadiness`);
             const scheduleSnapshot = requireObject(source.scheduleSnapshot, `${path}.scheduleSnapshot`);
             const moduleAggregation = requireObject(source.moduleAggregation, `${path}.moduleAggregation`);
 
-            return {
-                functionalCompletion: {
-                    label: requiredString(functionalCompletion.label, `${path}.functionalCompletion.label`, 160),
-                    formula: requiredString(functionalCompletion.formula, `${path}.functionalCompletion.formula`, 1000),
-                    comparisonRule: requiredString(
-                        functionalCompletion.comparisonRule,
-                        `${path}.functionalCompletion.comparisonRule`,
-                        1500
+            const normalizedFunctionalCompletion = {
+                label: requiredString(functionalCompletion.label, `${path}.functionalCompletion.label`, 160),
+                formula: requiredString(functionalCompletion.formula, `${path}.functionalCompletion.formula`, 1000),
+                comparisonRule: requiredString(
+                    functionalCompletion.comparisonRule,
+                    `${path}.functionalCompletion.comparisonRule`,
+                    1500
+                )
+            };
+            if (hasAbsoluteFunctionalWeights) {
+                Object.assign(normalizedFunctionalCompletion, {
+                    breadthLabel: requiredString(
+                        functionalCompletion.breadthLabel,
+                        `${path}.functionalCompletion.breadthLabel`,
+                        160
                     ),
+                    breadthFormula: requiredString(
+                        functionalCompletion.breadthFormula,
+                        `${path}.functionalCompletion.breadthFormula`,
+                        1000
+                    ),
+                    weightRule: requiredString(
+                        functionalCompletion.weightRule,
+                        `${path}.functionalCompletion.weightRule`,
+                        1500
+                    )
+                });
+            } else {
+                Object.assign(normalizedFunctionalCompletion, {
                     visionShareFormula: requiredString(
                         functionalCompletion.visionShareFormula,
                         `${path}.functionalCompletion.visionShareFormula`,
@@ -593,7 +613,11 @@
                         `${path}.functionalCompletion.decisionRequired`,
                         1500
                     )
-                },
+                });
+            }
+
+            return {
+                functionalCompletion: normalizedFunctionalCompletion,
                 releaseReadiness: {
                     label: requiredString(releaseReadiness.label, `${path}.releaseReadiness.label`, 160),
                     rule: requiredString(releaseReadiness.rule, `${path}.releaseReadiness.rule`, 1000),
@@ -616,6 +640,35 @@
                         1000
                     )
                 }
+            };
+        }
+
+        function normalizeAbsoluteWeightModel(input, path) {
+            const source = requireObject(input, path);
+            return {
+                version: requiredString(source.version, `${path}.version`, 120),
+                visionScopeId: validId(source.visionScopeId, `${path}.visionScopeId`),
+                scopeOrder: normalizeStringList(source.scopeOrder, `${path}.scopeOrder`, 120)
+                    .map((scopeId, index) => validId(scopeId, `${path}.scopeOrder[${index}]`)),
+                sourceDenominatorVersion: requiredString(
+                    source.sourceDenominatorVersion,
+                    `${path}.sourceDenominatorVersion`,
+                    160
+                ),
+                derivationRule: requiredString(source.derivationRule, `${path}.derivationRule`, 1500)
+            };
+        }
+
+        function normalizeFunctionalWeightOrigin(input, path) {
+            const source = requireObject(input, path);
+            return {
+                sourceDenominatorVersion: requiredString(
+                    source.sourceDenominatorVersion,
+                    `${path}.sourceDenominatorVersion`,
+                    160
+                ),
+                sourceWeight: finitePositive(source.sourceWeight, `${path}.sourceWeight`),
+                rationale: requiredString(source.rationale, `${path}.rationale`, 1000)
             };
         }
 
@@ -736,13 +789,83 @@
             };
         }
 
-        function calculateReleaseScopeProgress(releasePlan, scopeId) {
+        function calculateReleaseScopeMetrics(releasePlan, scopeId) {
             const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
-            const weightedProgress = workPackages.reduce((total, workPackage) => {
+            const scope = (Array.isArray(releasePlan?.scopes) ? releasePlan.scopes : [])
+                .find(item => item.id === scopeId);
+            const usesAbsoluteWeights = Array.isArray(scope?.workPackageIds)
+                && workPackages.every(workPackage => Number(workPackage.functionalWeight) > 0);
+
+            if (usesAbsoluteWeights) {
+                const memberIds = new Set(scope.workPackageIds);
+                const members = workPackages.filter(workPackage => memberIds.has(workPackage.id));
+                const totalWeight = members.reduce(
+                    (total, workPackage) => total + Number(workPackage.functionalWeight),
+                    0
+                );
+                const weightedCompletion = members.reduce(
+                    (total, workPackage) => total
+                        + Number(workPackage.functionalWeight) * (Number(workPackage.completionPercent) || 0),
+                    0
+                );
+                const visionScopeId = releasePlan.absoluteWeightModel?.visionScopeId;
+                const visionScope = releasePlan.scopes.find(item => item.id === visionScopeId);
+                const visionIds = new Set(visionScope?.workPackageIds || []);
+                const visionTotalWeight = workPackages
+                    .filter(workPackage => visionIds.has(workPackage.id))
+                    .reduce((total, workPackage) => total + Number(workPackage.functionalWeight), 0);
+                return {
+                    completionPercent: Math.round(weightedCompletion / totalWeight * 10) / 10,
+                    breadthPercent: Math.round(totalWeight / visionTotalWeight * 1000) / 10,
+                    totalWeight,
+                    visionTotalWeight
+                };
+            }
+
+            const totalWeight = workPackages.reduce(
+                (total, workPackage) => total + (Number(workPackage.weights?.[scopeId]) || 0),
+                0
+            );
+            const weightedCompletion = workPackages.reduce((total, workPackage) => {
                 const weight = Number(workPackage.weights?.[scopeId]) || 0;
-                return total + weight * (Number(workPackage.completionPercent) || 0) / 100;
+                return total + weight * (Number(workPackage.completionPercent) || 0);
             }, 0);
-            return Math.round(weightedProgress * 10) / 10;
+            return {
+                completionPercent: totalWeight > 0
+                    ? Math.round(weightedCompletion / totalWeight * 10) / 10
+                    : 0,
+                breadthPercent: null,
+                totalWeight,
+                visionTotalWeight: null
+            };
+        }
+
+        function calculateReleaseScopeProgress(releasePlan, scopeId) {
+            return calculateReleaseScopeMetrics(releasePlan, scopeId).completionPercent;
+        }
+
+        function releaseScopeInversionContributors(releasePlan, outerScopeId, innerScopeId) {
+            const scopes = Array.isArray(releasePlan?.scopes) ? releasePlan.scopes : [];
+            const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
+            const outerScope = scopes.find(scope => scope.id === outerScopeId);
+            const innerScope = scopes.find(scope => scope.id === innerScopeId);
+            if (!Array.isArray(outerScope?.workPackageIds) || !Array.isArray(innerScope?.workPackageIds)) return [];
+            const outerMetrics = calculateReleaseScopeMetrics(releasePlan, outerScopeId);
+            const innerMetrics = calculateReleaseScopeMetrics(releasePlan, innerScopeId);
+            if (outerMetrics.completionPercent <= innerMetrics.completionPercent) return [];
+
+            const innerIds = new Set(innerScope.workPackageIds);
+            return workPackages
+                .filter(workPackage => outerScope.workPackageIds.includes(workPackage.id) && !innerIds.has(workPackage.id))
+                .map(workPackage => ({
+                    id: workPackage.id,
+                    title: workPackage.title,
+                    functionalWeight: workPackage.functionalWeight,
+                    completionPercent: workPackage.completionPercent,
+                    completedWeight: workPackage.functionalWeight * workPackage.completionPercent / 100
+                }))
+                .filter(workPackage => workPackage.completedWeight > 0)
+                .sort((left, right) => right.completedWeight - left.completedWeight);
         }
 
         function releaseWorkPackagesForTopic(releasePlan, topicId) {
@@ -805,6 +928,7 @@
             }
             const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
             const hasMetricSemantics = releasePlanSchemaVersion >= 3;
+            const hasAbsoluteFunctionalWeights = releasePlanSchemaVersion >= 4;
 
             const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
             const sourceSnapshot = {
@@ -879,13 +1003,20 @@
                 scale: normalizeStringList(methodologyInput.scale, 'releasePlan.methodology.scale', 500)
             };
             const metricSemantics = hasMetricSemantics
-                ? normalizeMetricSemantics(source.metricSemantics, 'releasePlan.metricSemantics')
+                ? normalizeMetricSemantics(
+                    source.metricSemantics,
+                    'releasePlan.metricSemantics',
+                    hasAbsoluteFunctionalWeights
+                )
+                : null;
+            const absoluteWeightModel = hasAbsoluteFunctionalWeights
+                ? normalizeAbsoluteWeightModel(source.absoluteWeightModel, 'releasePlan.absoluteWeightModel')
                 : null;
 
             const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
                 const path = `releasePlan.scopes[${index}]`;
                 requireObject(scope, path);
-                return {
+                const normalized = {
                     id: validId(scope.id, `${path}.id`),
                     label: requiredString(scope.label, `${path}.label`, 160),
                     version: requiredString(scope.version, `${path}.version`, 80),
@@ -900,6 +1031,24 @@
                     canonicalSource: requiredString(scope.canonicalSource, `${path}.canonicalSource`, 300),
                     notes: optionalString(scope.notes, 2000)
                 };
+                if (hasAbsoluteFunctionalWeights) {
+                    normalized.workPackageIds = normalizeStringList(
+                        scope.workPackageIds,
+                        `${path}.workPackageIds`,
+                        120
+                    ).map((workPackageId, workPackageIndex) => validId(
+                        workPackageId,
+                        `${path}.workPackageIds[${workPackageIndex}]`
+                    ));
+                    if (new Set(normalized.workPackageIds).size !== normalized.workPackageIds.length) {
+                        throw new Error(`${path}.workPackageIds contiene duplicati.`);
+                    }
+                    normalized.reportedBreadthPercent = validPercentage(
+                        scope.reportedBreadthPercent,
+                        `${path}.reportedBreadthPercent`
+                    );
+                }
+                return normalized;
             });
             uniqueIds(scopes, 'releasePlan.scopes');
             const scopeIds = new Set(scopes.map(scope => scope.id));
@@ -922,14 +1071,19 @@
             const workPackages = requireArray(source.workPackages, 'releasePlan.workPackages').map((workPackage, index) => {
                 const path = `releasePlan.workPackages[${index}]`;
                 requireObject(workPackage, path);
+                if (hasAbsoluteFunctionalWeights && Object.hasOwn(workPackage, 'weights')) {
+                    throw new Error(`${path}.weights non è ammesso nella v4: usare un solo functionalWeight.`);
+                }
                 const weightsInput = workPackage.weights && typeof workPackage.weights === 'object'
                     ? workPackage.weights
                     : {};
-                Object.keys(weightsInput).forEach(scopeId => {
-                    if (!scopeIds.has(scopeId)) {
-                        throw new Error(`${path}.weights contiene lo scope sconosciuto ${scopeId}.`);
-                    }
-                });
+                if (!hasAbsoluteFunctionalWeights) {
+                    Object.keys(weightsInput).forEach(scopeId => {
+                        if (!scopeIds.has(scopeId)) {
+                            throw new Error(`${path}.weights contiene lo scope sconosciuto ${scopeId}.`);
+                        }
+                    });
+                }
                 const mappedTopicIds = normalizeStringList(workPackage.topicIds, `${path}.topicIds`, 120)
                     .map((topicId, topicIndex) => validId(topicId, `${path}.topicIds[${topicIndex}]`));
                 mappedTopicIds.forEach(topicId => {
@@ -943,10 +1097,6 @@
                     description: requiredString(workPackage.description, `${path}.description`, 1500),
                     status: validStatus(workPackage.status, `${path}.status`),
                     completionPercent: validPercentage(workPackage.completionPercent, `${path}.completionPercent`),
-                    weights: Object.fromEntries([...scopeIds].map(scopeId => [
-                        scopeId,
-                        finiteNonNegative(weightsInput[scopeId] ?? 0, `${path}.weights.${scopeId}`)
-                    ])),
                     topicIds: mappedTopicIds,
                     dependencies: normalizeStringList(workPackage.dependencies, `${path}.dependencies`, 120)
                         .map((dependency, dependencyIndex) => validId(dependency, `${path}.dependencies[${dependencyIndex}]`)),
@@ -961,6 +1111,21 @@
                         1500
                     )
                 };
+                if (hasAbsoluteFunctionalWeights) {
+                    normalized.functionalWeight = finitePositive(
+                        workPackage.functionalWeight,
+                        `${path}.functionalWeight`
+                    );
+                    normalized.functionalWeightOrigin = normalizeFunctionalWeightOrigin(
+                        workPackage.functionalWeightOrigin,
+                        `${path}.functionalWeightOrigin`
+                    );
+                } else {
+                    normalized.weights = Object.fromEntries([...scopeIds].map(scopeId => [
+                        scopeId,
+                        finiteNonNegative(weightsInput[scopeId] ?? 0, `${path}.weights.${scopeId}`)
+                    ]));
+                }
                 if (hasAdaptiveDelivery) {
                     Object.assign(normalized, {
                         productOutcome: requiredString(workPackage.productOutcome, `${path}.productOutcome`, 1500),
@@ -1011,18 +1176,90 @@
                 });
             });
 
-            scopes.forEach((scope, index) => {
-                const totalWeight = workPackages.reduce((total, workPackage) => total + workPackage.weights[scope.id], 0);
-                if (Math.abs(totalWeight - 100) > 0.01) {
-                    throw new Error(`I pesi di releasePlan.scopes[${index}] sommano ${totalWeight}, atteso 100.`);
+            if (hasAbsoluteFunctionalWeights) {
+                if (!scopeIds.has(absoluteWeightModel.visionScopeId)) {
+                    throw new Error('releasePlan.absoluteWeightModel.visionScopeId contiene uno scope sconosciuto.');
                 }
-                const calculated = calculateReleaseScopeProgress({ workPackages }, scope.id);
-                if (Math.abs(calculated - scope.reportedCompletionPercent) > 0.05) {
-                    throw new Error(
-                        `La percentuale dichiarata per ${scope.id} (${scope.reportedCompletionPercent}) diverge dal calcolo (${calculated}).`
-                    );
+                if (new Set(absoluteWeightModel.scopeOrder).size !== absoluteWeightModel.scopeOrder.length) {
+                    throw new Error('releasePlan.absoluteWeightModel.scopeOrder contiene duplicati.');
                 }
-            });
+                if (
+                    absoluteWeightModel.scopeOrder.length !== scopes.length
+                    || absoluteWeightModel.scopeOrder.some(scopeId => !scopeIds.has(scopeId))
+                ) {
+                    throw new Error('releasePlan.absoluteWeightModel.scopeOrder deve elencare tutti gli scope una sola volta.');
+                }
+                if (absoluteWeightModel.scopeOrder.at(-1) !== absoluteWeightModel.visionScopeId) {
+                    throw new Error('Lo scope della Known Vision deve essere l’ultimo in absoluteWeightModel.scopeOrder.');
+                }
+
+                const scopeById = new Map(scopes.map(scope => [scope.id, scope]));
+                scopes.forEach((scope, index) => {
+                    if (scope.workPackageIds.length === 0) {
+                        throw new Error(`releasePlan.scopes[${index}].workPackageIds non può essere vuoto.`);
+                    }
+                    scope.workPackageIds.forEach(workPackageId => {
+                        if (!workPackageIds.has(workPackageId)) {
+                            throw new Error(`releasePlan.scopes[${index}].workPackageIds contiene il WP sconosciuto ${workPackageId}.`);
+                        }
+                    });
+                });
+                const visionScope = scopeById.get(absoluteWeightModel.visionScopeId);
+                if (
+                    visionScope.workPackageIds.length !== workPackages.length
+                    || workPackages.some(workPackage => !visionScope.workPackageIds.includes(workPackage.id))
+                ) {
+                    throw new Error('Lo scope Known Vision deve includere tutti i work package.');
+                }
+                for (let index = 1; index < absoluteWeightModel.scopeOrder.length; index += 1) {
+                    const innerScope = scopeById.get(absoluteWeightModel.scopeOrder[index - 1]);
+                    const outerScope = scopeById.get(absoluteWeightModel.scopeOrder[index]);
+                    if (innerScope.workPackageIds.some(workPackageId => !outerScope.workPackageIds.includes(workPackageId))) {
+                        throw new Error(`${innerScope.id} deve essere un sottoinsieme di ${outerScope.id}.`);
+                    }
+                }
+                workPackages.forEach((workPackage, index) => {
+                    const origin = workPackage.functionalWeightOrigin;
+                    if (origin.sourceDenominatorVersion !== absoluteWeightModel.sourceDenominatorVersion) {
+                        throw new Error(
+                            `releasePlan.workPackages[${index}].functionalWeightOrigin usa una fonte diversa dal modello.`
+                        );
+                    }
+                    if (Math.abs(origin.sourceWeight - workPackage.functionalWeight) > 0.0001) {
+                        throw new Error(
+                            `releasePlan.workPackages[${index}].functionalWeight diverge dal peso sorgente dichiarato.`
+                        );
+                    }
+                });
+
+                const metricsPlan = { workPackages, scopes, absoluteWeightModel };
+                scopes.forEach(scope => {
+                    const calculated = calculateReleaseScopeMetrics(metricsPlan, scope.id);
+                    if (Math.abs(calculated.completionPercent - scope.reportedCompletionPercent) > 0.05) {
+                        throw new Error(
+                            `La percentuale dichiarata per ${scope.id} (${scope.reportedCompletionPercent}) diverge dal calcolo (${calculated.completionPercent}).`
+                        );
+                    }
+                    if (Math.abs(calculated.breadthPercent - scope.reportedBreadthPercent) > 0.05) {
+                        throw new Error(
+                            `L’ampiezza dichiarata per ${scope.id} (${scope.reportedBreadthPercent}) diverge dal calcolo (${calculated.breadthPercent}).`
+                        );
+                    }
+                });
+            } else {
+                scopes.forEach((scope, index) => {
+                    const totalWeight = workPackages.reduce((total, workPackage) => total + workPackage.weights[scope.id], 0);
+                    if (Math.abs(totalWeight - 100) > 0.01) {
+                        throw new Error(`I pesi di releasePlan.scopes[${index}] sommano ${totalWeight}, atteso 100.`);
+                    }
+                    const calculated = calculateReleaseScopeProgress({ workPackages }, scope.id);
+                    if (Math.abs(calculated - scope.reportedCompletionPercent) > 0.05) {
+                        throw new Error(
+                            `La percentuale dichiarata per ${scope.id} (${scope.reportedCompletionPercent}) diverge dal calcolo (${calculated}).`
+                        );
+                    }
+                });
+            }
 
             const gates = requireArray(source.gates, 'releasePlan.gates').map((gate, index) => {
                 const path = `releasePlan.gates[${index}]`;
@@ -1240,6 +1477,7 @@
                 capacity,
                 scopes,
                 ...(hasMetricSemantics ? { metricSemantics } : {}),
+                ...(hasAbsoluteFunctionalWeights ? { absoluteWeightModel } : {}),
                 ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
                 workPackages,
                 gates,
@@ -1519,7 +1757,7 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeProgress, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
@@ -2715,7 +2953,7 @@
     })();
 
     (() => {
-        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent, summarizeScopeGateReadiness } = modelApi;
+        const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
         const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
@@ -2994,8 +3232,9 @@
             elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
 
             clear(elements.releaseScopeCards);
-            releasePlan.scopes.forEach(scope => {
-                const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+            releasePlan.scopes.forEach((scope, scopeIndex) => {
+                const metrics = calculateReleaseScopeMetrics(releasePlan, scope.id);
+                const calculated = metrics.completionPercent;
                 const metricLabel = releasePlan.metricSemantics?.functionalCompletion.label
                     || 'Avanzamento funzionale nello scope';
                 const readiness = summarizeScopeGateReadiness(releasePlan, scope.id);
@@ -3009,6 +3248,26 @@
                         'aria-label': `${metricLabel}, ${scope.label}: ${calculated}%`
                     }
                 });
+                const breadth = metrics.breadthPercent === null
+                    ? null
+                    : createElement('div', { className: 'release-scope__breadth' }, [
+                        createElement('span', {
+                            text: releasePlan.metricSemantics.functionalCompletion.breadthLabel
+                        }),
+                        createElement('strong', { text: `${metrics.breadthPercent.toFixed(1)}%` })
+                    ]);
+                const previousScope = releasePlan.scopes[scopeIndex - 1];
+                const inversionContributors = previousScope
+                    ? releaseScopeInversionContributors(releasePlan, scope.id, previousScope.id)
+                    : [];
+                const inversionDetail = inversionContributors.length
+                    ? createElement('details', { className: 'release-scope__contributors' }, [
+                        createElement('summary', { text: 'Perché il completamento aumenta' }),
+                        createElement('ul', {}, inversionContributors.map(workPackage => createElement('li', {
+                            text: `${workPackage.title}: ${workPackage.completionPercent.toFixed(1)}% · peso ${workPackage.functionalWeight}`
+                        })))
+                    ])
+                    : null;
                 elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
                     createElement('div', { className: 'release-scope__heading' }, [
                         createElement('div', {}, [
@@ -3019,6 +3278,8 @@
                     ]),
                     createElement('span', { className: 'release-scope__metric-label', text: metricLabel }),
                     progress,
+                    breadth,
+                    inversionDetail,
                     createElement('p', { className: 'muted', text: scope.perimeter }),
                     createElement('small', {
                         text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
@@ -3035,14 +3296,18 @@
             setHidden(elements.releaseMetricSemantics, !metricSemantics);
             clear(elements.releaseMetricSemantics);
             if (metricSemantics) {
+                const functionalCompletion = metricSemantics.functionalCompletion;
+                const breadthText = functionalCompletion.breadthFormula
+                    ? `${functionalCompletion.breadthLabel}: ${functionalCompletion.breadthFormula}`
+                    : `Quota della Visione: ${functionalCompletion.visionShareFormula} Stato: ${functionalCompletion.visionShareStatus}.`;
                 elements.releaseMetricSemantics.append(
                     createElement('strong', { text: 'Come leggere queste misure' }),
                     createElement('p', {
-                        text: `${metricSemantics.functionalCompletion.formula} ${metricSemantics.functionalCompletion.comparisonRule}`
+                        text: `${functionalCompletion.label}: ${functionalCompletion.formula} ${functionalCompletion.comparisonRule}`
                     }),
                     createElement('p', {
                         className: 'muted',
-                        text: `Quota della Visione: ${metricSemantics.functionalCompletion.visionShareFormula} Stato: ${metricSemantics.functionalCompletion.visionShareStatus}.`
+                        text: breadthText
                     }),
                     createElement('p', {
                         className: 'muted',
@@ -3143,10 +3408,18 @@
                     createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
                     progress
                 ]);
-                const weights = releasePlan.scopes
-                    .filter(scope => workPackage.weights[scope.id] > 0)
-                    .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
-                    .join(' · ') || 'Fuori perimetro';
+                const weights = workPackage.functionalWeight
+                    ? [
+                        `Peso funzionale: ${workPackage.functionalWeight}`,
+                        `Scope: ${releasePlan.scopes
+                            .filter(scope => scope.workPackageIds?.includes(workPackage.id))
+                            .map(scope => scope.label)
+                            .join(', ')}`
+                    ].join(' · ')
+                    : releasePlan.scopes
+                        .filter(scope => workPackage.weights[scope.id] > 0)
+                        .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
+                        .join(' · ') || 'Fuori perimetro';
                 const latestEvidence = workPackage.evidence.at(-1);
                 const evidence = createElement('div', { className: 'release-wp__evidence' }, [
                     createElement('span', { text: weights }),

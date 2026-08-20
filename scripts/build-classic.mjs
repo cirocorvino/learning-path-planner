@@ -26,7 +26,9 @@ const modules = [
             'createEmptyWeekTemplate',
             'createEmptyDatabase',
             'databaseHasContent',
+            'calculateReleaseScopeMetrics',
             'calculateReleaseScopeProgress',
+            'releaseScopeInversionContributors',
             'releaseWorkPackagesForTopic',
             'summarizeModuleWorkPackageSnapshot',
             'summarizeScopeGateReadiness',
@@ -123,7 +125,7 @@ const modules = [
         name: null,
         file: 'js/app.js',
         prelude: [
-            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent, summarizeScopeGateReadiness } = modelApi;',
+            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
             'const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;',
             'const { normalizeDatabasePath } = configurationApi;',

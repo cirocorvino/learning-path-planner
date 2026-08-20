@@ -405,6 +405,32 @@ code {
     font-weight: 800;
 }
 
+.release-scope__breadth {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.65rem;
+    color: #334155;
+    font-size: 0.78rem;
+}
+
+.release-scope__contributors {
+    margin-top: 0.65rem;
+    color: #334155;
+    font-size: 0.76rem;
+}
+
+.release-scope__contributors summary {
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.release-scope__contributors ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1rem;
+    line-height: 1.4;
+}
+
 .release-scope__percent {
     color: #0f766e;
     font-size: 1.45rem;

@@ -132,10 +132,15 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
   },
   "state": { "progress": {} },
   "releasePlan": {
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "sourceSnapshot": {},
     "methodology": {},
     "metricSemantics": {},
+    "absoluteWeightModel": {
+      "version": "absolute-functional-v1@2026-08-20",
+      "visionScopeId": "known-vision",
+      "scopeOrder": ["pilot-v1", "public-mvp-v1", "known-vision"]
+    },
     "capacity": {},
     "scopes": [],
     "releaseStatus": {},
@@ -154,17 +159,19 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
 }
 ```
 
-I formati `releasePlan` v1 e v2 restano leggibili. La v2 aggiunge un riepilogo in linguaggio comune, baseline originaria e forecast residuo, perimetro effettivamente schedulato e modello di coefficienti adattivi. La v3 aggiunge `metricSemantics`, che dichiara formula e limiti dell'avanzamento funzionale, regola di readiness, significato degli snapshot settimanali e aggregazione dei WP nei moduli.
+I formati `releasePlan` v1, v2 e v3 restano leggibili. La v2 aggiunge riepilogo, baseline e coefficienti adattivi; la v3 aggiunge la semantica esplicita delle metriche. La v4 introduce un solo `functionalWeight` per WP, membership esplicita tramite `scope.workPackageIds` e `reportedBreadthPercent`.
 
-Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze, eventuali topic del piano e un peso per ciascuno scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
+Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze ed eventuali topic del piano. Nella v4 aggiunge un solo `functionalWeight` con la relativa origine; le versioni precedenti conservano i pesi storici per-scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
 
 `dependencyRules` assegna una semantica temporale alla dipendenza: `required_before_start`, `overlap_after_design`, `required_at_final_gate` o `required_at_paid_gate`. `criticalPath` distingue la catena primaria dai rami obbligatori che possono procedere in parallelo e convergono su un gate.
 
 `deliveryTotals` distingue ore attive, ore già registrate, residuo netto e durata del Gantt. La durata del Gantt può essere più lunga delle settimane nette quando i moduli restano blocchi settimanali conservativi o intervengono eccezioni di calendario; `ganttRule` deve dichiararlo esplicitamente. I lead time esterni non si sommano automaticamente alla durata del Gantt.
 
-Per ogni scope i pesi devono sommare esattamente 100; la percentuale complessiva è la somma di `peso × completamento / 100`. Il valore `reportedCompletionPercent` viene rifiutato se diverge dal calcolo. Quando gli scope usano vettori di pesi rinormalizzati differenti, i risultati sono validi soltanto nel rispettivo denominatore e non sono direttamente confrontabili: `metricSemantics.functionalCompletion.comparisonRule` deve dichiararlo.
+Nella v4 ogni WP possiede un solo `functionalWeight`, indipendente da effort, durata e percentuale corrente. Gli scope differiscono soltanto per `workPackageIds` e devono essere annidati nell'ordine dichiarato da `absoluteWeightModel.scopeOrder`; lo scope Known Vision include tutti i WP. Il completamento è `somma(peso × completamento) / somma(pesi inclusi)`. L'ampiezza è `somma(pesi inclusi) / somma(pesi Known Vision)`. I valori dichiarati vengono rifiutati se divergono dai calcoli.
 
-La readiness non deriva dalla percentuale funzionale. Gli stati ammessi sono `ready`, `not_ready`, `partially_scheduled` e `not_assessed`. `ready` è accettato soltanto quando esiste almeno un gate applicabile e tutti i gate obbligatori dello scope sono `complete`; la validazione opera fail-closed. L'interfaccia mostra gate superati e applicabili insieme ai blocker. La futura quota di Visione realizzata richiede un vettore di pesi assoluti comune e una nuova `denominatorVersion`: non viene dedotta dal rapporto fra percentuali con denominatori diversi.
+`functionalWeightOrigin` registra per ogni WP denominatore sorgente, peso sorgente e motivazione. La v4 rifiuta il vecchio oggetto `weights` per-scope, origini divergenti e membership non annidate. I database v1-v3 conservano invece il proprio modello storico durante la normalizzazione.
+
+La readiness non deriva dal completamento o dall'ampiezza. Gli stati ammessi sono `ready`, `not_ready`, `partially_scheduled` e `not_assessed`. `ready` è accettato soltanto quando esiste almeno un gate applicabile e tutti i gate obbligatori dello scope sono `complete`; la validazione opera fail-closed.
 
 Gli scope devono versionare il denominatore e indicare la fonte canonica. `changeHistory` registra le variazioni del piano; `scopeChanges` registra le modifiche di perimetro che rendono percentuali di versioni diverse non direttamente confrontabili. Gate, milestone, forecast e percorso critico sono validati rispetto agli ID dichiarati.
 

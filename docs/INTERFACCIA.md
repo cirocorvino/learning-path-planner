@@ -108,13 +108,14 @@ Un avviso compare quando mancano slot focus, il target supera la capacità o una
 
 ## Dashboard di rilascio
 
-Quando il database contiene un `releasePlan`, la dashboard separa tre informazioni:
+Quando il database contiene un `releasePlan`, la dashboard separa quattro informazioni:
 
-- **avanzamento funzionale nello scope:** media ponderata dei WP nel relativo denominatore;
+- **completamento nello scope:** media ponderata dei WP inclusi, usando un peso funzionale comune;
+- **ampiezza della Visione:** quota dei pesi della Known Vision inclusa nello scope;
 - **readiness di rilascio:** gate superati/applicabili e blocker, senza convertirli in una percentuale funzionale;
 - **previsioni:** finestre di calendario e stime di delivery.
 
-Le carte Pilot, MVP pubblico e Visione riportano formula, versione del denominatore e data dello snapshot. Se i denominatori hanno pesi rinormalizzati differenti, i valori non sono direttamente confrontabili e non misurano l'ampiezza di uno scope rispetto alla Visione.
+Le carte Pilot, MVP pubblico e Visione riportano completamento, ampiezza, versione del denominatore e data dello snapshot. Lo stesso WP mantiene lo stesso peso in tutti gli scope; cambia soltanto la membership. Se uno scope più ampio mostra un completamento superiore, un dettaglio espandibile elenca i WP esclusivi che contribuiscono all'aumento. La readiness rimane sempre separata.
 
 ## Diagramma di Gantt
 

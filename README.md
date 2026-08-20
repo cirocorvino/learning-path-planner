@@ -12,7 +12,7 @@ Il piano viene mostrato su un diagramma di Gantt e, per ogni settimana, come age
 - template settimanale con più slot per giorno;
 - target settimanale e date eccezionali che riducono la capacità reale;
 - Gantt calcolato sulla disponibilità effettiva e dettaglio di ogni settimana;
-- dashboard di rilascio opzionale con avanzamento funzionale, gate di readiness, WP, forecast e semantica esplicita degli snapshot;
+- dashboard di rilascio opzionale con completamento, ampiezza della Visione, gate di readiness, WP, forecast e semantica esplicita degli snapshot;
 - copia di lavoro IndexedDB in modalità `file://` ed esportazione JSON portabile;
 - importazione di piani (solo dati relativi ai moduli e agli argomenti, senza le categorie e i parametri dell'app);
 - database predefinito configurabile (indexedDB, oppure, con web server, data/user/organizer-data.json).

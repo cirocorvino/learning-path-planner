@@ -3,9 +3,10 @@ import {
     DAY_KEYS,
     MODULE_MODES,
     TOPIC_KINDS,
-    calculateReleaseScopeProgress,
+    calculateReleaseScopeMetrics,
     createId,
     databaseHasContent,
+    releaseScopeInversionContributors,
     summarizeScopeGateReadiness
 } from './model.js';
 import {
@@ -299,8 +300,9 @@ function renderReleaseDashboard() {
     elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
 
     clear(elements.releaseScopeCards);
-    releasePlan.scopes.forEach(scope => {
-        const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+    releasePlan.scopes.forEach((scope, scopeIndex) => {
+        const metrics = calculateReleaseScopeMetrics(releasePlan, scope.id);
+        const calculated = metrics.completionPercent;
         const metricLabel = releasePlan.metricSemantics?.functionalCompletion.label
             || 'Avanzamento funzionale nello scope';
         const readiness = summarizeScopeGateReadiness(releasePlan, scope.id);
@@ -314,6 +316,26 @@ function renderReleaseDashboard() {
                 'aria-label': `${metricLabel}, ${scope.label}: ${calculated}%`
             }
         });
+        const breadth = metrics.breadthPercent === null
+            ? null
+            : createElement('div', { className: 'release-scope__breadth' }, [
+                createElement('span', {
+                    text: releasePlan.metricSemantics.functionalCompletion.breadthLabel
+                }),
+                createElement('strong', { text: `${metrics.breadthPercent.toFixed(1)}%` })
+            ]);
+        const previousScope = releasePlan.scopes[scopeIndex - 1];
+        const inversionContributors = previousScope
+            ? releaseScopeInversionContributors(releasePlan, scope.id, previousScope.id)
+            : [];
+        const inversionDetail = inversionContributors.length
+            ? createElement('details', { className: 'release-scope__contributors' }, [
+                createElement('summary', { text: 'Perché il completamento aumenta' }),
+                createElement('ul', {}, inversionContributors.map(workPackage => createElement('li', {
+                    text: `${workPackage.title}: ${workPackage.completionPercent.toFixed(1)}% · peso ${workPackage.functionalWeight}`
+                })))
+            ])
+            : null;
         elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
             createElement('div', { className: 'release-scope__heading' }, [
                 createElement('div', {}, [
@@ -324,6 +346,8 @@ function renderReleaseDashboard() {
             ]),
             createElement('span', { className: 'release-scope__metric-label', text: metricLabel }),
             progress,
+            breadth,
+            inversionDetail,
             createElement('p', { className: 'muted', text: scope.perimeter }),
             createElement('small', {
                 text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
@@ -340,14 +364,18 @@ function renderReleaseDashboard() {
     setHidden(elements.releaseMetricSemantics, !metricSemantics);
     clear(elements.releaseMetricSemantics);
     if (metricSemantics) {
+        const functionalCompletion = metricSemantics.functionalCompletion;
+        const breadthText = functionalCompletion.breadthFormula
+            ? `${functionalCompletion.breadthLabel}: ${functionalCompletion.breadthFormula}`
+            : `Quota della Visione: ${functionalCompletion.visionShareFormula} Stato: ${functionalCompletion.visionShareStatus}.`;
         elements.releaseMetricSemantics.append(
             createElement('strong', { text: 'Come leggere queste misure' }),
             createElement('p', {
-                text: `${metricSemantics.functionalCompletion.formula} ${metricSemantics.functionalCompletion.comparisonRule}`
+                text: `${functionalCompletion.label}: ${functionalCompletion.formula} ${functionalCompletion.comparisonRule}`
             }),
             createElement('p', {
                 className: 'muted',
-                text: `Quota della Visione: ${metricSemantics.functionalCompletion.visionShareFormula} Stato: ${metricSemantics.functionalCompletion.visionShareStatus}.`
+                text: breadthText
             }),
             createElement('p', {
                 className: 'muted',
@@ -448,10 +476,18 @@ function renderReleaseDashboard() {
             createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` }),
             progress
         ]);
-        const weights = releasePlan.scopes
-            .filter(scope => workPackage.weights[scope.id] > 0)
-            .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
-            .join(' · ') || 'Fuori perimetro';
+        const weights = workPackage.functionalWeight
+            ? [
+                `Peso funzionale: ${workPackage.functionalWeight}`,
+                `Scope: ${releasePlan.scopes
+                    .filter(scope => scope.workPackageIds?.includes(workPackage.id))
+                    .map(scope => scope.label)
+                    .join(', ')}`
+            ].join(' · ')
+            : releasePlan.scopes
+                .filter(scope => workPackage.weights[scope.id] > 0)
+                .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
+                .join(' · ') || 'Fuori perimetro';
         const latestEvidence = workPackage.evidence.at(-1);
         const evidence = createElement('div', { className: 'release-wp__evidence' }, [
             createElement('span', { text: weights }),
