@@ -22,5 +22,7 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     assert.match(bundle, /className: allocationClassNames\.itemClassName/);
     assert.match(bundle, /buildAllocationReleasePresentation/);
     assert.match(bundle, /buildModuleWorkPackagePresentation/);
+    assert.match(bundle, /calculateReleaseScopeMetrics/);
+    assert.match(bundle, /releaseScopeInversionContributors/);
     assert.match(bundle, /summarizeScopeGateReadiness/);
 });

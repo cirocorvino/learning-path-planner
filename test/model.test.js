@@ -5,11 +5,13 @@ import test from 'node:test';
 import {
     DATABASE_KIND,
     PLAN_KIND,
+    calculateReleaseScopeMetrics,
     calculateReleaseScopeProgress,
     createEmptyDatabase,
     databaseHasContent,
     normalizeDatabase,
     normalizePlanInput,
+    releaseScopeInversionContributors,
     releaseWorkPackagesForTopic,
     summarizeModuleWorkPackageSnapshot,
     summarizeScopeGateReadiness,
@@ -279,6 +281,95 @@ function semanticReleaseDatabase() {
     return database;
 }
 
+function absoluteReleaseDatabase() {
+    const database = semanticReleaseDatabase();
+    const releasePlan = database.releasePlan;
+    releasePlan.schemaVersion = 4;
+    releasePlan.absoluteWeightModel = {
+        version: 'absolute-functional-v1@2026-08-20',
+        visionScopeId: 'known-vision',
+        scopeOrder: ['pilot-v1', 'public-mvp-v1', 'known-vision'],
+        sourceDenominatorVersion: 'known-vision@2026-08-19',
+        derivationRule: 'Adotta senza modifiche i pesi del precedente scope Known Vision.'
+    };
+    releasePlan.metricSemantics.functionalCompletion = {
+        label: 'Completamento nello scope',
+        formula: 'Somma(peso × completamento) / somma(pesi inclusi).',
+        comparisonRule: 'Lo stesso WP conserva lo stesso peso in ogni scope.',
+        breadthLabel: 'Ampiezza della Visione',
+        breadthFormula: 'Somma(pesi inclusi) / somma(pesi Known Vision).',
+        weightRule: 'Un solo peso funzionale assoluto per WP.'
+    };
+
+    const pilotScope = releasePlan.scopes[0];
+    Object.assign(pilotScope, {
+        denominatorVersion: 'pilot-v1@absolute-v1-2026-08-20',
+        workPackageIds: ['wp-one'],
+        reportedCompletionPercent: 25,
+        reportedBreadthPercent: 40
+    });
+    releasePlan.scopes = [
+        pilotScope,
+        {
+            ...structuredClone(pilotScope),
+            id: 'public-mvp-v1',
+            label: 'MVP pubblico v1',
+            denominatorVersion: 'public-mvp-v1@absolute-v1-2026-08-20',
+            workPackageIds: ['wp-one', 'wp-two'],
+            reportedCompletionPercent: 18.6,
+            reportedBreadthPercent: 70
+        },
+        {
+            ...structuredClone(pilotScope),
+            id: 'known-vision',
+            label: 'Known Vision',
+            denominatorVersion: 'known-vision@absolute-v1-2026-08-20',
+            workPackageIds: ['wp-one', 'wp-two', 'wp-three'],
+            reportedCompletionPercent: 28,
+            reportedBreadthPercent: 100
+        }
+    ];
+
+    const firstWorkPackage = releasePlan.workPackages[0];
+    delete firstWorkPackage.weights;
+    Object.assign(firstWorkPackage, {
+        functionalWeight: 4,
+        functionalWeightOrigin: {
+            sourceDenominatorVersion: 'known-vision@2026-08-19',
+            sourceWeight: 4,
+            rationale: 'Peso Known Vision precedente adottato invariato.'
+        }
+    });
+    const secondWorkPackage = structuredClone(firstWorkPackage);
+    Object.assign(secondWorkPackage, {
+        id: 'wp-two',
+        title: 'Secondo work package',
+        completionPercent: 10,
+        functionalWeight: 3,
+        functionalWeightOrigin: {
+            ...secondWorkPackage.functionalWeightOrigin,
+            sourceWeight: 3
+        },
+        criticalPath: false,
+        issueRefs: ['#2']
+    });
+    const thirdWorkPackage = structuredClone(firstWorkPackage);
+    Object.assign(thirdWorkPackage, {
+        id: 'wp-three',
+        title: 'Funzione post-MVP',
+        completionPercent: 50,
+        functionalWeight: 3,
+        functionalWeightOrigin: {
+            ...thirdWorkPackage.functionalWeightOrigin,
+            sourceWeight: 3
+        },
+        criticalPath: false,
+        issueRefs: ['#3']
+    });
+    releasePlan.workPackages = [firstWorkPackage, secondWorkPackage, thirdWorkPackage];
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -377,6 +468,61 @@ test('normalizza le semantiche metriche v3 e separa la readiness dai valori funz
     assert.equal(readiness.status, 'not_ready');
     assert.equal(readiness.passedGateCount, 0);
     assert.equal(readiness.applicableGateCount, 1);
+});
+
+test('normalizza il modello v4 con peso assoluto comune, membership e breadth', () => {
+    const result = normalizeDatabase(absoluteReleaseDatabase());
+    const releasePlan = result.database.releasePlan;
+    const pilot = calculateReleaseScopeMetrics(releasePlan, 'pilot-v1');
+    const publicMvp = calculateReleaseScopeMetrics(releasePlan, 'public-mvp-v1');
+    const vision = calculateReleaseScopeMetrics(releasePlan, 'known-vision');
+
+    assert.equal(releasePlan.schemaVersion, 4);
+    assert.equal(releasePlan.workPackages[0].functionalWeight, 4);
+    assert.equal('weights' in releasePlan.workPackages[0], false);
+    assert.deepEqual(pilot, { completionPercent: 25, breadthPercent: 40, totalWeight: 4, visionTotalWeight: 10 });
+    assert.deepEqual(publicMvp, { completionPercent: 18.6, breadthPercent: 70, totalWeight: 7, visionTotalWeight: 10 });
+    assert.deepEqual(vision, { completionPercent: 28, breadthPercent: 100, totalWeight: 10, visionTotalWeight: 10 });
+});
+
+test('mostra i contributori esclusivi quando il post-MVP aumenta davvero il completamento', () => {
+    const releasePlan = normalizeDatabase(absoluteReleaseDatabase()).database.releasePlan;
+    const contributors = releaseScopeInversionContributors(releasePlan, 'known-vision', 'public-mvp-v1');
+
+    assert.deepEqual(contributors.map(workPackage => workPackage.id), ['wp-three']);
+    assert.equal(contributors[0].completedWeight, 1.5);
+    assert.deepEqual(releaseScopeInversionContributors(releasePlan, 'public-mvp-v1', 'pilot-v1'), []);
+});
+
+test('mantiene stabile il round-trip del release plan v4', () => {
+    const first = normalizeDatabase(absoluteReleaseDatabase()).database;
+    const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
+
+    assert.deepEqual(second, first);
+});
+
+test('rifiuta vettori per-scope nel modello v4', () => {
+    const invalid = absoluteReleaseDatabase();
+    invalid.releasePlan.workPackages[0].weights = { 'pilot-v1': 100 };
+
+    assert.throws(() => normalizeDatabase(invalid), /un solo functionalWeight/i);
+});
+
+test('rifiuta membership non annidate nel modello v4', () => {
+    const invalid = absoluteReleaseDatabase();
+    invalid.releasePlan.scopes[1].workPackageIds = ['wp-two'];
+
+    assert.throws(() => normalizeDatabase(invalid), /sottoinsieme/i);
+});
+
+test('rifiuta origine o breadth incoerenti nel modello v4', () => {
+    const invalidOrigin = absoluteReleaseDatabase();
+    invalidOrigin.releasePlan.workPackages[0].functionalWeightOrigin.sourceWeight = 5;
+    assert.throws(() => normalizeDatabase(invalidOrigin), /diverge dal peso sorgente/i);
+
+    const invalidBreadth = absoluteReleaseDatabase();
+    invalidBreadth.releasePlan.scopes[0].reportedBreadthPercent = 41;
+    assert.throws(() => normalizeDatabase(invalidBreadth), /ampiezza dichiarata/i);
 });
 
 test('rifiuta fail-closed una readiness ready con gate obbligatorio non completato', () => {
