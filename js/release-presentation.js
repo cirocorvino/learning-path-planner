@@ -16,6 +16,20 @@ function contributorViewModel(workPackage, locale) {
     };
 }
 
+export function buildAllocationClassNames(releasePlan) {
+    if (!releasePlan) {
+        return {
+            listClassName: 'allocation-list',
+            itemClassName: 'allocation-pill'
+        };
+    }
+
+    return {
+        listClassName: 'allocation-list allocation-list--release',
+        itemClassName: 'allocation-pill allocation-pill--release'
+    };
+}
+
 export function buildAllocationReleasePresentation(releasePlan, allocation, locale = 'it-IT') {
     const duration = formatDuration(allocation.minutes);
     if (!releasePlan) {

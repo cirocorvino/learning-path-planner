@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation
 } from '../js/release-presentation.js';
+import { readFileSync } from 'node:fs';
 
 const workPackages = [
     { id: 'product', title: 'Documento di Progetto', completionPercent: 78, lastReviewedAt: '2026-08-19', topicIds: ['baseline', 'handoff'] },
@@ -28,6 +30,23 @@ const releasePlan = {
         }
     }
 };
+
+test('mantiene le classi legacy e applica i modificatori soltanto ai piani release', () => {
+    assert.deepEqual(buildAllocationClassNames(null), {
+        listClassName: 'allocation-list',
+        itemClassName: 'allocation-pill'
+    });
+    assert.deepEqual(buildAllocationClassNames(releasePlan), {
+        listClassName: 'allocation-list allocation-list--release',
+        itemClassName: 'allocation-pill allocation-pill--release'
+    });
+
+    const css = readFileSync(new URL('../Style/styles.css', import.meta.url), 'utf8');
+    assert.match(css, /\.allocation-list\s*\{\s*display: flex;\s*flex-wrap: wrap;/);
+    assert.match(css, /\.allocation-pill\s*\{\s*padding: 0\.42rem 0\.65rem;\s*border-radius: 999px;/);
+    assert.match(css, /\.allocation-list--release\s*\{\s*display: grid;/);
+    assert.match(css, /\.allocation-pill--release\s*\{\s*display: grid;/);
+});
 
 test('preserva il testo legacy quando il database non contiene releasePlan', () => {
     const presentation = buildAllocationReleasePresentation(null, {

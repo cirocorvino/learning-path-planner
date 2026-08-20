@@ -20,6 +20,7 @@ import {
 } from './planner.js';
 import { normalizeDatabasePath } from './db-configuration.js';
 import {
+    buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation
 } from './release-presentation.js';
@@ -780,11 +781,12 @@ function renderSelectedWeek() {
         tabs.append(button);
     }
 
-    const allocations = createElement('div', { className: 'allocation-list' });
+    const allocationClassNames = buildAllocationClassNames(currentDatabase.releasePlan);
+    const allocations = createElement('div', { className: allocationClassNames.listClassName });
     if (module.mode === 'buffer') {
-        allocations.append(createElement('span', { className: 'allocation-pill', text: 'Settimana di recupero e consolidamento' }));
+        allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Settimana di recupero e consolidamento' }));
     } else if (agenda.allocations.length === 0) {
-        allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
+        allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Nessuna attività pianificata' }));
     } else {
         agenda.allocations.forEach(allocation => {
             const presentation = buildAllocationReleasePresentation(
@@ -794,7 +796,7 @@ function renderSelectedWeek() {
             );
             if (presentation.mode === 'legacy') {
                 allocations.append(createElement('span', {
-                    className: 'allocation-pill',
+                    className: allocationClassNames.itemClassName,
                     text: presentation.text
                 }));
                 return;
@@ -807,7 +809,7 @@ function renderSelectedWeek() {
                     })))
                     : createElement('p', { text: presentation.emptyContributorsText })
             ]);
-            allocations.append(createElement('article', { className: 'allocation-pill' }, [
+            allocations.append(createElement('article', { className: allocationClassNames.itemClassName }, [
                 createElement('strong', { text: presentation.title }),
                 createElement('span', {
                     className: 'allocation-pill__hours',

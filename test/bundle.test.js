@@ -17,6 +17,9 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     );
     assert.match(bundle, /newDatabaseButton\.title = newDatabaseDisabled \? 'Il database è già vuoto' : ''/);
     assert.match(bundle, /const releasePresentationApi = \(\(\) => \{/);
+    assert.match(bundle, /buildAllocationClassNames/);
+    assert.match(bundle, /className: allocationClassNames\.listClassName/);
+    assert.match(bundle, /className: allocationClassNames\.itemClassName/);
     assert.match(bundle, /buildAllocationReleasePresentation/);
     assert.match(bundle, /buildModuleWorkPackagePresentation/);
     assert.match(bundle, /summarizeScopeGateReadiness/);

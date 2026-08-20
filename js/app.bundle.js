@@ -1913,6 +1913,20 @@
             };
         }
 
+        function buildAllocationClassNames(releasePlan) {
+            if (!releasePlan) {
+                return {
+                    listClassName: 'allocation-list',
+                    itemClassName: 'allocation-pill'
+                };
+            }
+
+            return {
+                listClassName: 'allocation-list allocation-list--release',
+                itemClassName: 'allocation-pill allocation-pill--release'
+            };
+        }
+
         function buildAllocationReleasePresentation(releasePlan, allocation, locale = 'it-IT') {
             const duration = formatDuration(allocation.minutes);
             if (!releasePlan) {
@@ -1962,7 +1976,7 @@
             };
         }
 
-        return { buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
+        return { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
     })();
 
     const configurationApi = (() => {
@@ -2703,7 +2717,7 @@
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
-        const { buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
+        const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -3462,11 +3476,12 @@
                 tabs.append(button);
             }
 
-            const allocations = createElement('div', { className: 'allocation-list' });
+            const allocationClassNames = buildAllocationClassNames(currentDatabase.releasePlan);
+            const allocations = createElement('div', { className: allocationClassNames.listClassName });
             if (module.mode === 'buffer') {
-                allocations.append(createElement('span', { className: 'allocation-pill', text: 'Settimana di recupero e consolidamento' }));
+                allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Settimana di recupero e consolidamento' }));
             } else if (agenda.allocations.length === 0) {
-                allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
+                allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Nessuna attività pianificata' }));
             } else {
                 agenda.allocations.forEach(allocation => {
                     const presentation = buildAllocationReleasePresentation(
@@ -3476,7 +3491,7 @@
                     );
                     if (presentation.mode === 'legacy') {
                         allocations.append(createElement('span', {
-                            className: 'allocation-pill',
+                            className: allocationClassNames.itemClassName,
                             text: presentation.text
                         }));
                         return;
@@ -3489,7 +3504,7 @@
                             })))
                             : createElement('p', { text: presentation.emptyContributorsText })
                     ]);
-                    allocations.append(createElement('article', { className: 'allocation-pill' }, [
+                    allocations.append(createElement('article', { className: allocationClassNames.itemClassName }, [
                         createElement('strong', { text: presentation.title }),
                         createElement('span', {
                             className: 'allocation-pill__hours',
