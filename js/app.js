@@ -5,7 +5,8 @@ import {
     TOPIC_KINDS,
     calculateReleaseScopeProgress,
     createId,
-    databaseHasContent
+    databaseHasContent,
+    summarizeScopeGateReadiness
 } from './model.js';
 import {
     buildPlanSchedule,
@@ -18,6 +19,11 @@ import {
     getWeekAgenda
 } from './planner.js';
 import { normalizeDatabasePath } from './db-configuration.js';
+import {
+    buildAllocationClassNames,
+    buildAllocationReleasePresentation,
+    buildModuleWorkPackagePresentation
+} from './release-presentation.js';
 import { plannerStore } from './store.js';
 
 const elements = Object.fromEntries([
@@ -43,6 +49,7 @@ const elements = Object.fromEntries([
     'releaseSourceSummary',
     'releaseCapacitySummary',
     'releaseScopeCards',
+    'releaseMetricSemantics',
     'releaseStatusPanel',
     'releaseDeliveryTotals',
     'releaseStatusHeadline',
@@ -114,6 +121,13 @@ const RELEASE_STATUS_LABELS = {
     not_started: 'Non iniziato',
     future: 'Futuro',
     superseded: 'Superato'
+};
+
+const RELEASE_READINESS_LABELS = {
+    ready: 'Pronto',
+    not_ready: 'Non pronto',
+    partially_scheduled: 'Parzialmente schedulato',
+    not_assessed: 'Non valutato'
 };
 
 const DELIVERY_PROFILE_LABELS = {
@@ -234,13 +248,16 @@ function releaseStatusBadge(status) {
     });
 }
 
+function releaseReadinessBadge(status) {
+    return createElement('span', {
+        className: `release-status release-status--${status}`,
+        text: RELEASE_READINESS_LABELS[status] || status
+    });
+}
+
 function releaseWorkPackageMap() {
     const releasePlan = currentDatabase.releasePlan;
     return new Map((releasePlan?.workPackages || []).map(workPackage => [workPackage.id, workPackage]));
-}
-
-function releaseWorkPackageForTopic(topicId) {
-    return currentDatabase.releasePlan?.workPackages.find(workPackage => workPackage.topicIds.includes(topicId)) || null;
 }
 
 function releaseDate(value, locale) {
@@ -284,8 +301,18 @@ function renderReleaseDashboard() {
     clear(elements.releaseScopeCards);
     releasePlan.scopes.forEach(scope => {
         const calculated = calculateReleaseScopeProgress(releasePlan, scope.id);
+        const metricLabel = releasePlan.metricSemantics?.functionalCompletion.label
+            || 'Avanzamento funzionale nello scope';
+        const readiness = summarizeScopeGateReadiness(releasePlan, scope.id);
+        const gateCount = readiness.applicableGateCount
+            ? `${readiness.passedGateCount}/${readiness.applicableGateCount} gate superati`
+            : 'Nessun gate applicabile registrato';
         const progress = createElement('progress', {
-            attributes: { max: 100, value: calculated, 'aria-label': `${scope.label}: ${calculated}%` }
+            attributes: {
+                max: 100,
+                value: calculated,
+                'aria-label': `${metricLabel}, ${scope.label}: ${calculated}%`
+            }
         });
         elements.releaseScopeCards.append(createElement('article', { className: 'release-scope' }, [
             createElement('div', { className: 'release-scope__heading' }, [
@@ -295,13 +322,39 @@ function renderReleaseDashboard() {
                 ]),
                 createElement('span', { className: 'release-scope__percent', text: `${calculated.toFixed(1)}%` })
             ]),
+            createElement('span', { className: 'release-scope__metric-label', text: metricLabel }),
             progress,
             createElement('p', { className: 'muted', text: scope.perimeter }),
             createElement('small', {
-                text: `${scope.status} · revisione ${releaseDate(scope.lastReviewedAt, locale)}`
-            })
+                text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
+            }),
+            createElement('div', { className: 'release-scope__readiness' }, [
+                createElement('span', { text: releasePlan.metricSemantics?.releaseReadiness.label || 'Readiness di rilascio' }),
+                releaseReadinessBadge(readiness.status),
+                createElement('small', { text: `${gateCount}. ${readiness.summary}` })
+            ])
         ]));
     });
+
+    const metricSemantics = releasePlan.metricSemantics;
+    setHidden(elements.releaseMetricSemantics, !metricSemantics);
+    clear(elements.releaseMetricSemantics);
+    if (metricSemantics) {
+        elements.releaseMetricSemantics.append(
+            createElement('strong', { text: 'Come leggere queste misure' }),
+            createElement('p', {
+                text: `${metricSemantics.functionalCompletion.formula} ${metricSemantics.functionalCompletion.comparisonRule}`
+            }),
+            createElement('p', {
+                className: 'muted',
+                text: `Quota della Visione: ${metricSemantics.functionalCompletion.visionShareFormula} Stato: ${metricSemantics.functionalCompletion.visionShareStatus}.`
+            }),
+            createElement('p', {
+                className: 'muted',
+                text: `${metricSemantics.releaseReadiness.rule} ${metricSemantics.releaseReadiness.blockingRule}`
+            })
+        );
+    }
 
     const releaseStatus = releasePlan.releaseStatus;
     setHidden(elements.releaseStatusPanel, !releaseStatus);
@@ -331,7 +384,10 @@ function renderReleaseDashboard() {
         elements.releaseCriticalPath.append(createElement('li', {}, [
             createElement('span', { text: workPackage.title }),
             releaseStatusBadge(workPackage.status),
-            createElement('strong', { text: `${workPackage.completionPercent.toFixed(1)}%` })
+            createElement('strong', {
+                text: `Stato WP ${workPackage.completionPercent.toFixed(1)}%`,
+                title: `Snapshot ${releaseDate(workPackage.lastReviewedAt, locale)}`
+            })
         ]));
     });
     clear(elements.releaseCriticalBranches);
@@ -394,7 +450,7 @@ function renderReleaseDashboard() {
         ]);
         const weights = releasePlan.scopes
             .filter(scope => workPackage.weights[scope.id] > 0)
-            .map(scope => `${scope.label}: ${workPackage.weights[scope.id]}`)
+            .map(scope => `Peso interno ${scope.label}: ${workPackage.weights[scope.id]}/100`)
             .join(' · ') || 'Fuori perimetro';
         const latestEvidence = workPackage.evidence.at(-1);
         const evidence = createElement('div', { className: 'release-wp__evidence' }, [
@@ -573,25 +629,35 @@ function renderGantt() {
     const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
 
     modules.forEach(module => {
-        const moduleWorkPackages = (currentDatabase.releasePlan?.workPackages || [])
-            .filter(workPackage => workPackage.topicIds.some(topicId => module.topics.some(topic => topic.id === topicId)));
-        const moduleProgress = moduleWorkPackages.length
-            ? Math.round(moduleWorkPackages.reduce((total, workPackage) => total + workPackage.completionPercent, 0) / moduleWorkPackages.length)
-            : null;
-        const isCritical = moduleWorkPackages.some(workPackage => workPackage.criticalPath);
+        const modulePresentation = buildModuleWorkPackagePresentation(currentDatabase.releasePlan, module, locale);
+        const isCritical = modulePresentation?.contributors.some(workPackage => workPackage.criticalPath) || false;
         const row = createElement('div', {
             className: 'gantt__row',
             attributes: { role: 'row' }
         });
 
+        const moduleSnapshotDetails = modulePresentation
+            ? createElement('details', { className: 'gantt__wp-snapshot' }, [
+                createElement('summary', {
+                    text: modulePresentation.summaryText
+                }),
+                createElement('p', {
+                    text: modulePresentation.explanationText
+                }),
+                createElement('ul', {}, modulePresentation.contributors.map(workPackage => createElement('li', {
+                    text: workPackage.text
+                })))
+            ])
+            : null;
         const identity = createElement('div', { attributes: { role: 'cell' } }, [
             createElement('span', { className: 'gantt__module-title', text: module.title }),
             createElement('span', {
                 className: 'gantt__module-meta',
                 text: module.mode === 'buffer'
                     ? 'Pausa / buffer'
-                    : `${module.topics.length} argomenti${moduleProgress === null ? '' : ` · ${moduleProgress}%`}${isCritical ? ' · percorso critico' : ''}`
-            })
+                    : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
+            }),
+            moduleSnapshotDetails
         ]);
 
         const effort = createElement('div', { attributes: { role: 'cell' } }, [
@@ -715,20 +781,52 @@ function renderSelectedWeek() {
         tabs.append(button);
     }
 
-    const allocations = createElement('div', { className: 'allocation-list' });
+    const allocationClassNames = buildAllocationClassNames(currentDatabase.releasePlan);
+    const allocations = createElement('div', { className: allocationClassNames.listClassName });
     if (module.mode === 'buffer') {
-        allocations.append(createElement('span', { className: 'allocation-pill', text: 'Settimana di recupero e consolidamento' }));
+        allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Settimana di recupero e consolidamento' }));
     } else if (agenda.allocations.length === 0) {
-        allocations.append(createElement('span', { className: 'allocation-pill', text: 'Nessuna attività pianificata' }));
+        allocations.append(createElement('span', { className: allocationClassNames.itemClassName, text: 'Nessuna attività pianificata' }));
     } else {
         agenda.allocations.forEach(allocation => {
-            const workPackage = releaseWorkPackageForTopic(allocation.topicId);
-            allocations.append(createElement('span', {
-                className: 'allocation-pill',
-                text: `${allocation.title} · ${formatDuration(allocation.minutes)}${workPackage ? ` · ${workPackage.completionPercent}%` : ''}`
-            }));
+            const presentation = buildAllocationReleasePresentation(
+                currentDatabase.releasePlan,
+                allocation,
+                locale
+            );
+            if (presentation.mode === 'legacy') {
+                allocations.append(createElement('span', {
+                    className: allocationClassNames.itemClassName,
+                    text: presentation.text
+                }));
+                return;
+            }
+            const snapshotDetails = createElement('details', { className: 'allocation-pill__snapshot' }, [
+                createElement('summary', { text: presentation.snapshotSummaryText }),
+                presentation.contributors.length
+                    ? createElement('ul', {}, presentation.contributors.map(workPackage => createElement('li', {
+                        text: workPackage.text
+                    })))
+                    : createElement('p', { text: presentation.emptyContributorsText })
+            ]);
+            allocations.append(createElement('article', { className: allocationClassNames.itemClassName }, [
+                createElement('strong', { text: presentation.title }),
+                createElement('span', {
+                    className: 'allocation-pill__hours',
+                    text: presentation.plannedHoursText
+                }),
+                snapshotDetails
+            ]));
         });
     }
+
+    const snapshotNote = currentDatabase.releasePlan
+        ? createElement('p', {
+            className: 'release-snapshot-note',
+            text: currentDatabase.releasePlan.metricSemantics?.scheduleSnapshot.rule
+                || 'Lo stato WP è uno snapshot corrente: non misura il progresso della settimana e non cresce automaticamente nelle settimane future.'
+        })
+        : null;
 
     const agendaGrid = createElement('div', { className: 'agenda' });
     agenda.days.forEach(day => {
@@ -782,7 +880,9 @@ function renderSelectedWeek() {
         agendaGrid.append(dayCard);
     });
 
-    elements.weekDetail.append(heading, tabs, allocations, agendaGrid);
+    elements.weekDetail.append(heading, tabs);
+    if (snapshotNote) elements.weekDetail.append(snapshotNote);
+    elements.weekDetail.append(allocations, agendaGrid);
     setHidden(elements.weekDetail, false);
 }
 

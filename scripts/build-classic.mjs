@@ -17,6 +17,7 @@ const modules = [
             'RELEASE_DATABASE_SCHEMA_VERSION',
             'RELEASE_PLAN_SCHEMA_VERSION',
             'RELEASE_STATUSES',
+            'RELEASE_READINESS_STATUSES',
             'DAY_KEYS',
             'TOPIC_KINDS',
             'CATEGORY_ROLES',
@@ -26,6 +27,9 @@ const modules = [
             'createEmptyDatabase',
             'databaseHasContent',
             'calculateReleaseScopeProgress',
+            'releaseWorkPackagesForTopic',
+            'summarizeModuleWorkPackageSnapshot',
+            'summarizeScopeGateReadiness',
             'normalizeDatabase',
             'normalizePlanInput',
             'updateDatabase',
@@ -55,6 +59,19 @@ const modules = [
             'formatDuration',
             'formatDate',
             'formatDayName'
+        ]
+    },
+    {
+        name: 'releasePresentationApi',
+        file: 'js/release-presentation.js',
+        prelude: [
+            'const { releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;',
+            'const { formatDate, formatDuration } = plannerApi;'
+        ].join('\n'),
+        exports: [
+            'buildAllocationClassNames',
+            'buildAllocationReleasePresentation',
+            'buildModuleWorkPackagePresentation'
         ]
     },
     {
@@ -106,8 +123,9 @@ const modules = [
         name: null,
         file: 'js/app.js',
         prelude: [
-            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent } = modelApi;',
+            'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeProgress, createId, databaseHasContent, summarizeScopeGateReadiness } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
+            'const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'
         ].join('\n'),

@@ -2,9 +2,9 @@ export const DATABASE_KIND = 'learning-planner-database';
 export const PLAN_KIND = 'learning-plan';
 export const SCHEMA_VERSION = 2;
 export const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-export const RELEASE_PLAN_SCHEMA_VERSION = 2;
+export const RELEASE_PLAN_SCHEMA_VERSION = 3;
 
-const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, RELEASE_PLAN_SCHEMA_VERSION];
+const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, RELEASE_PLAN_SCHEMA_VERSION];
 const DELIVERY_DEPENDENCY_TYPES = [
     'required_before_start',
     'overlap_after_design',
@@ -22,6 +22,13 @@ export const RELEASE_STATUSES = [
     'not_started',
     'future',
     'superseded'
+];
+
+export const RELEASE_READINESS_STATUSES = [
+    'ready',
+    'not_ready',
+    'partially_scheduled',
+    'not_assessed'
 ];
 
 export const DAY_KEYS = [
@@ -237,6 +244,14 @@ function validStatus(value, path) {
     const status = String(value || 'not_started');
     if (!RELEASE_STATUSES.includes(status)) {
         throw new Error(`${path} non è supportato.`);
+    }
+    return status;
+}
+
+function validReadinessStatus(value, path) {
+    const status = String(value || 'not_assessed');
+    if (!RELEASE_READINESS_STATUSES.includes(status)) {
+        throw new Error(`${path} non è uno stato di readiness supportato.`);
     }
     return status;
 }
@@ -522,7 +537,7 @@ function normalizeReleaseStatus(input, path, scopeIds) {
         if (!scopeIds.has(scopeId)) throw new Error(`${itemPath}.scopeId è sconosciuto.`);
         return {
             scopeId,
-            status: requiredString(item.status, `${itemPath}.status`, 80),
+            status: validReadinessStatus(item.status, `${itemPath}.status`),
             summary: requiredString(item.summary, `${itemPath}.summary`, 1000)
         };
     });
@@ -539,6 +554,63 @@ function normalizeReleaseStatus(input, path, scopeIds) {
         nextGateBlockers: normalizeStringList(source.nextGateBlockers, `${path}.nextGateBlockers`, 1000),
         nextStep: requiredString(source.nextStep, `${path}.nextStep`, 1500),
         readiness
+    };
+}
+
+function normalizeMetricSemantics(input, path) {
+    const source = requireObject(input, path);
+    const functionalCompletion = requireObject(source.functionalCompletion, `${path}.functionalCompletion`);
+    const releaseReadiness = requireObject(source.releaseReadiness, `${path}.releaseReadiness`);
+    const scheduleSnapshot = requireObject(source.scheduleSnapshot, `${path}.scheduleSnapshot`);
+    const moduleAggregation = requireObject(source.moduleAggregation, `${path}.moduleAggregation`);
+
+    return {
+        functionalCompletion: {
+            label: requiredString(functionalCompletion.label, `${path}.functionalCompletion.label`, 160),
+            formula: requiredString(functionalCompletion.formula, `${path}.functionalCompletion.formula`, 1000),
+            comparisonRule: requiredString(
+                functionalCompletion.comparisonRule,
+                `${path}.functionalCompletion.comparisonRule`,
+                1500
+            ),
+            visionShareFormula: requiredString(
+                functionalCompletion.visionShareFormula,
+                `${path}.functionalCompletion.visionShareFormula`,
+                1000
+            ),
+            visionShareStatus: requiredString(
+                functionalCompletion.visionShareStatus,
+                `${path}.functionalCompletion.visionShareStatus`,
+                120
+            ),
+            decisionRequired: requiredString(
+                functionalCompletion.decisionRequired,
+                `${path}.functionalCompletion.decisionRequired`,
+                1500
+            )
+        },
+        releaseReadiness: {
+            label: requiredString(releaseReadiness.label, `${path}.releaseReadiness.label`, 160),
+            rule: requiredString(releaseReadiness.rule, `${path}.releaseReadiness.rule`, 1000),
+            blockingRule: requiredString(
+                releaseReadiness.blockingRule,
+                `${path}.releaseReadiness.blockingRule`,
+                1000
+            )
+        },
+        scheduleSnapshot: {
+            label: requiredString(scheduleSnapshot.label, `${path}.scheduleSnapshot.label`, 160),
+            rule: requiredString(scheduleSnapshot.rule, `${path}.scheduleSnapshot.rule`, 1000)
+        },
+        moduleAggregation: {
+            label: requiredString(moduleAggregation.label, `${path}.moduleAggregation.label`, 160),
+            formula: requiredString(moduleAggregation.formula, `${path}.moduleAggregation.formula`, 1000),
+            interpretation: requiredString(
+                moduleAggregation.interpretation,
+                `${path}.moduleAggregation.interpretation`,
+                1000
+            )
+        }
     };
 }
 
@@ -668,6 +740,58 @@ export function calculateReleaseScopeProgress(releasePlan, scopeId) {
     return Math.round(weightedProgress * 10) / 10;
 }
 
+export function releaseWorkPackagesForTopic(releasePlan, topicId) {
+    const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
+    return workPackages.filter(workPackage => workPackage.topicIds?.includes(topicId));
+}
+
+export function summarizeModuleWorkPackageSnapshot(workPackages, topicIds) {
+    const topicIdSet = new Set(Array.isArray(topicIds) ? topicIds : []);
+    const seenIds = new Set();
+    const matchedWorkPackages = (Array.isArray(workPackages) ? workPackages : []).filter(workPackage => {
+        if (seenIds.has(workPackage.id)) return false;
+        if (!workPackage.topicIds?.some(topicId => topicIdSet.has(topicId))) return false;
+        seenIds.add(workPackage.id);
+        return true;
+    });
+    if (matchedWorkPackages.length === 0) {
+        return {
+            workPackages: [],
+            averageCompletionPercent: null,
+            minimumCompletionPercent: null,
+            maximumCompletionPercent: null
+        };
+    }
+
+    const completionValues = matchedWorkPackages.map(workPackage => Number(workPackage.completionPercent) || 0);
+    const average = completionValues.reduce((total, value) => total + value, 0) / completionValues.length;
+    return {
+        workPackages: matchedWorkPackages,
+        averageCompletionPercent: Math.round(average),
+        minimumCompletionPercent: Math.min(...completionValues),
+        maximumCompletionPercent: Math.max(...completionValues)
+    };
+}
+
+export function summarizeScopeGateReadiness(releasePlan, scopeId) {
+    const applicableGates = (Array.isArray(releasePlan?.gates) ? releasePlan.gates : [])
+        .filter(gate => gate.requiredFor?.includes(scopeId));
+    const passedGates = applicableGates.filter(gate => gate.status === 'complete');
+    const declared = releasePlan?.releaseStatus?.readiness?.find(item => item.scopeId === scopeId) || null;
+    const blockingGates = applicableGates.filter(gate => gate.status !== 'complete');
+    const declaredStatus = declared?.status || 'not_assessed';
+    const status = declaredStatus === 'ready' && (applicableGates.length === 0 || blockingGates.length > 0)
+        ? 'not_ready'
+        : declaredStatus;
+    return {
+        status,
+        summary: declared?.summary || 'Readiness non valutata.',
+        passedGateCount: passedGates.length,
+        applicableGateCount: applicableGates.length,
+        blockingGates
+    };
+}
+
 function normalizeReleasePlan(input, topicIds) {
     const source = requireObject(input, 'releasePlan');
     const releasePlanSchemaVersion = Number(source.schemaVersion);
@@ -675,6 +799,7 @@ function normalizeReleasePlan(input, topicIds) {
         throw new Error(`Versione release plan non supportata: ${source.schemaVersion}.`);
     }
     const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
+    const hasMetricSemantics = releasePlanSchemaVersion >= 3;
 
     const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
     const sourceSnapshot = {
@@ -748,6 +873,9 @@ function normalizeReleasePlan(input, topicIds) {
         denominatorRule: requiredString(methodologyInput.denominatorRule, 'releasePlan.methodology.denominatorRule', 1000),
         scale: normalizeStringList(methodologyInput.scale, 'releasePlan.methodology.scale', 500)
     };
+    const metricSemantics = hasMetricSemantics
+        ? normalizeMetricSemantics(source.metricSemantics, 'releasePlan.metricSemantics')
+        : null;
 
     const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
         const path = `releasePlan.scopes[${index}]`;
@@ -913,6 +1041,19 @@ function normalizeReleasePlan(input, topicIds) {
     });
     uniqueIds(gates, 'releasePlan.gates');
     const gateIds = new Set(gates.map(gate => gate.id));
+    if (releaseStatus) {
+        releaseStatus.readiness.forEach((item, index) => {
+            if (item.status !== 'ready') return;
+            const applicableGates = gates.filter(gate => gate.requiredFor.includes(item.scopeId));
+            const blockingGates = applicableGates.filter(gate => gate.status !== 'complete');
+            if (applicableGates.length === 0 || blockingGates.length > 0) {
+                throw new Error(
+                    `releasePlan.releaseStatus.readiness[${index}] non può essere ready: `
+                    + 'tutti i gate applicabili devono esistere ed essere complete.'
+                );
+            }
+        });
+    }
 
     const forecasts = requireArray(source.forecasts, 'releasePlan.forecasts').map((forecast, index) => {
         const path = `releasePlan.forecasts[${index}]`;
@@ -1093,6 +1234,7 @@ function normalizeReleasePlan(input, topicIds) {
         methodology,
         capacity,
         scopes,
+        ...(hasMetricSemantics ? { metricSemantics } : {}),
         ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
         workPackages,
         gates,

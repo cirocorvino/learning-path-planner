@@ -106,15 +106,27 @@ Le schede sotto la barra delle azioni mostrano:
 
 Un avviso compare quando mancano slot focus, il target supera la capacità o una migrazione richiede attenzione.
 
+## Dashboard di rilascio
+
+Quando il database contiene un `releasePlan`, la dashboard separa tre informazioni:
+
+- **avanzamento funzionale nello scope:** media ponderata dei WP nel relativo denominatore;
+- **readiness di rilascio:** gate superati/applicabili e blocker, senza convertirli in una percentuale funzionale;
+- **previsioni:** finestre di calendario e stime di delivery.
+
+Le carte Pilot, MVP pubblico e Visione riportano formula, versione del denominatore e data dello snapshot. Se i denominatori hanno pesi rinormalizzati differenti, i valori non sono direttamente confrontabili e non misurano l'ampiezza di uno scope rispetto alla Visione.
+
 ## Diagramma di Gantt
 
-Il Gantt rappresenta i moduli in sequenza. Ogni riga riporta nome, impegno, numero di settimane, periodo e barra temporale colorata.
+Il Gantt rappresenta i moduli in sequenza. Ogni riga riporta nome, impegno, numero di settimane, periodo e barra temporale colorata. Nei piani di rilascio può inoltre mostrare lo **stato medio dei WP collegati**: è la media aritmetica dei WP distinti associati ai topic del modulo, con elenco dei contributori e date di revisione. Non è avanzamento temporale del modulo né forecast.
 
 Selezionando la barra di un modulo si apre il relativo dettaglio settimanale. Le date vengono ricalcolate quando cambiano stime, target, disponibilità o eccezioni.
 
 ## Dettaglio settimanale
 
-Il dettaglio mostra una scheda per ciascuna settimana del modulo. In alto sono riepilogati gli argomenti e i minuti assegnati; sotto appare l'agenda dei sette giorni.
+Il dettaglio mostra una scheda per ciascuna settimana del modulo. In alto sono riepilogati gli argomenti e i minuti assegnati; sotto appare l'agenda dei sette giorni. Nei piani di rilascio le ore pianificate restano separate dallo **stato WP oggi**. Se un topic contribuisce a più WP, il riepilogo espandibile li elenca tutti con percentuale e data dello snapshot.
+
+Lo stato WP è corrente: la stessa percentuale può comparire in settimane diverse e future perché non cresce automaticamente con il calendario.
 
 Ogni attività mostra:
 

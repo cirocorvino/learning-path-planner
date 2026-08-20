@@ -10,6 +10,9 @@ import {
     databaseHasContent,
     normalizeDatabase,
     normalizePlanInput,
+    releaseWorkPackagesForTopic,
+    summarizeModuleWorkPackageSnapshot,
+    summarizeScopeGateReadiness,
     updateDatabase
 } from '../js/model.js';
 
@@ -246,6 +249,36 @@ function adaptiveReleaseDatabase() {
     return database;
 }
 
+function semanticReleaseDatabase() {
+    const database = adaptiveReleaseDatabase();
+    database.releasePlan.schemaVersion = 3;
+    database.releasePlan.metricSemantics = {
+        functionalCompletion: {
+            label: 'Avanzamento funzionale nello scope',
+            formula: 'Σ(peso interno × completamento) / 100.',
+            comparisonRule: 'Gli scope correnti non sono direttamente confrontabili.',
+            visionShareFormula: 'avanzamento × ampiezza',
+            visionShareStatus: 'blocked',
+            decisionRequired: 'Il PO deve approvare pesi assoluti comuni.'
+        },
+        releaseReadiness: {
+            label: 'Readiness di rilascio',
+            rule: 'Mostrare gate superati e applicabili.',
+            blockingRule: 'Un gate obbligatorio aperto mantiene NOT READY.'
+        },
+        scheduleSnapshot: {
+            label: 'Stato WP oggi',
+            rule: 'Snapshot corrente, non forecast.'
+        },
+        moduleAggregation: {
+            label: 'Stato medio dei WP collegati',
+            formula: 'Media aritmetica dei WP distinti.',
+            interpretation: 'Non è avanzamento temporale del modulo.'
+        }
+    };
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -269,6 +302,61 @@ test('normalizza il database v3 e calcola la percentuale ponderata', () => {
     assert.equal(calculateReleaseScopeProgress(result.database.releasePlan, 'pilot-v1'), 25);
 });
 
+test('riepiloga Onda 1 usando due WP distinti e non tre topic', () => {
+    const workPackages = [
+        {
+            id: 'product-document',
+            title: 'Documento di Progetto',
+            completionPercent: 78,
+            lastReviewedAt: '2026-08-19',
+            topicIds: ['baseline', 'handoff']
+        },
+        {
+            id: 'architecture',
+            title: 'Architettura',
+            completionPercent: 70,
+            lastReviewedAt: '2026-08-18',
+            topicIds: ['facade']
+        }
+    ];
+
+    const snapshot = summarizeModuleWorkPackageSnapshot(workPackages, ['baseline', 'handoff', 'facade']);
+
+    assert.equal(snapshot.averageCompletionPercent, 74);
+    assert.deepEqual(snapshot.workPackages.map(workPackage => workPackage.id), ['product-document', 'architecture']);
+});
+
+test('riepiloga Onboarding una sola volta quando tre topic condividono lo stesso WP', () => {
+    const workPackages = [{
+        id: 'onboarding',
+        title: 'Onboarding',
+        completionPercent: 55,
+        lastReviewedAt: '2026-08-19',
+        topicIds: ['resume', 'profile', 'correction']
+    }];
+
+    const snapshot = summarizeModuleWorkPackageSnapshot(workPackages, ['resume', 'profile', 'correction']);
+
+    assert.equal(snapshot.averageCompletionPercent, 55);
+    assert.equal(snapshot.workPackages.length, 1);
+});
+
+test('include tutti i contributi multi-WP nella Strumentazione pilot', () => {
+    const workPackages = [
+        { id: 'admin', title: 'Admin', completionPercent: 15, lastReviewedAt: '2026-08-17', topicIds: ['analytics'] },
+        { id: 'provider', title: 'Provider', completionPercent: 25, lastReviewedAt: '2026-08-18', topicIds: ['smoke'] },
+        { id: 'operations', title: 'Operations', completionPercent: 35, lastReviewedAt: '2026-08-19', topicIds: ['smoke', 'release'] },
+        { id: 'accessibility', title: 'Accessibilità', completionPercent: 20, lastReviewedAt: '2026-08-16', topicIds: ['release'] }
+    ];
+
+    const snapshot = summarizeModuleWorkPackageSnapshot(workPackages, ['analytics', 'smoke', 'release']);
+    const releaseContributors = releaseWorkPackagesForTopic({ workPackages }, 'release');
+
+    assert.equal(snapshot.averageCompletionPercent, 24);
+    assert.deepEqual(snapshot.workPackages.map(workPackage => workPackage.completionPercent), [15, 25, 35, 20]);
+    assert.deepEqual(releaseContributors.map(workPackage => workPackage.id), ['operations', 'accessibility']);
+});
+
 test('normalizza il release plan adattivo v2 senza perdere stime e dipendenze temporali', () => {
     const result = normalizeDatabase(adaptiveReleaseDatabase());
     const releasePlan = result.database.releasePlan;
@@ -277,6 +365,46 @@ test('normalizza il release plan adattivo v2 senza perdere stime e dipendenze te
     assert.equal(releasePlan.releaseStatus.readiness[0].status, 'not_ready');
     assert.equal(releasePlan.workPackages[0].deliveryEstimate.correctedRemainingHours, 12);
     assert.equal(releasePlan.criticalPath.convergingBranches[0].joinsAt, 'gate-one');
+});
+
+test('normalizza le semantiche metriche v3 e separa la readiness dai valori funzionali', () => {
+    const result = normalizeDatabase(semanticReleaseDatabase());
+    const releasePlan = result.database.releasePlan;
+    const readiness = summarizeScopeGateReadiness(releasePlan, 'pilot-v1');
+
+    assert.equal(releasePlan.schemaVersion, 3);
+    assert.equal(releasePlan.metricSemantics.functionalCompletion.label, 'Avanzamento funzionale nello scope');
+    assert.equal(readiness.status, 'not_ready');
+    assert.equal(readiness.passedGateCount, 0);
+    assert.equal(readiness.applicableGateCount, 1);
+});
+
+test('rifiuta fail-closed una readiness ready con gate obbligatorio non completato', () => {
+    const invalid = semanticReleaseDatabase();
+    invalid.releasePlan.releaseStatus.readiness[0].status = 'ready';
+
+    assert.throws(() => normalizeDatabase(invalid), /non può essere ready/i);
+});
+
+test('accetta ready soltanto quando tutti i gate applicabili sono completi', () => {
+    const database = semanticReleaseDatabase();
+    database.releasePlan.gates[0].status = 'complete';
+    database.releasePlan.releaseStatus.readiness[0].status = 'ready';
+
+    const releasePlan = normalizeDatabase(database).database.releasePlan;
+    const readiness = summarizeScopeGateReadiness(releasePlan, 'pilot-v1');
+
+    assert.equal(readiness.status, 'ready');
+    assert.equal(readiness.passedGateCount, 1);
+    assert.equal(readiness.applicableGateCount, 1);
+    assert.equal(readiness.blockingGates.length, 0);
+});
+
+test('rifiuta stati di readiness fuori vocabolario', () => {
+    const invalid = semanticReleaseDatabase();
+    invalid.releasePlan.releaseStatus.readiness[0].status = 'almost_ready';
+
+    assert.throws(() => normalizeDatabase(invalid), /readiness supportato/i);
 });
 
 test('rifiuta lead time adattivi con intervalli invertiti', () => {
