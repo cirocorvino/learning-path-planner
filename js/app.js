@@ -21,6 +21,7 @@ import {
 } from './planner.js';
 import { normalizeDatabasePath } from './db-configuration.js';
 import {
+    buildActualWorkLogPresentation,
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation
@@ -62,6 +63,13 @@ const elements = Object.fromEntries([
     'releaseCriticalBranches',
     'releaseForecasts',
     'releaseWorkPackages',
+    'releaseActualWorkPanel',
+    'releaseActualCoverage',
+    'releaseActualSemantics',
+    'releaseActualSummary',
+    'releaseActualDays',
+    'releaseActualTotals',
+    'releaseActualTotalsContent',
     'releaseGates',
     'releaseMilestones',
     'releaseHistory',
@@ -277,6 +285,138 @@ function releaseSummaryList(title, items) {
     const list = createElement('ul');
     items.forEach(item => list.append(createElement('li', { text: item })));
     return createElement('section', {}, [createElement('h4', { text: title }), list]);
+}
+
+function actualSummaryMetric(label, value, detail = '') {
+    return createElement('article', {}, [
+        createElement('span', { text: label }),
+        createElement('strong', { text: value }),
+        detail ? createElement('small', { text: detail }) : null
+    ]);
+}
+
+function renderActualWorkLog(releasePlan, locale) {
+    const presentation = buildActualWorkLogPresentation(
+        releasePlan,
+        locale,
+        currentDatabase.metadata.timeZone
+    );
+    setHidden(elements.releaseActualWorkPanel, !presentation);
+    if (!presentation) return;
+
+    elements.releaseActualCoverage.textContent = presentation.coverageNote;
+    clear(elements.releaseActualSemantics);
+    presentation.semantics.forEach(item => {
+        elements.releaseActualSemantics.append(createElement('article', {}, [
+            createElement('strong', { text: item.label }),
+            createElement('p', { text: item.text })
+        ]));
+    });
+
+    clear(elements.releaseActualSummary);
+    elements.releaseActualSummary.append(
+        actualSummaryMetric(
+            'Somma per task',
+            presentation.summary.taskElapsedText,
+            `${presentation.summary.closedEntryCount} intervalli o durate chiusi`
+        ),
+        actualSummaryMetric(
+            'Unione giornaliera',
+            presentation.summary.dailyUnionText,
+            'Le sovrapposizioni parallele sono contate una sola volta'
+        ),
+        actualSummaryMetric(
+            'Durate non collocate',
+            presentation.summary.unplacedText,
+            'Non diventano fasce orarie'
+        ),
+        actualSummaryMetric(
+            'Effort agentico equivalente',
+            presentation.summary.agentEffortText,
+            'Non derivato dal tempo di orologio'
+        )
+    );
+
+    clear(elements.releaseActualDays);
+    if (presentation.empty) {
+        elements.releaseActualDays.append(createElement('p', {
+            className: 'muted',
+            text: presentation.emptyText
+        }));
+    }
+    presentation.days.forEach(day => {
+        const entries = createElement('div', { className: 'release-actual-day__entries' });
+        day.entries.forEach(entry => {
+            const outputEvidence = createElement('div', { className: 'release-actual-entry__evidence' }, [
+                createElement('strong', { text: 'Evidenza output' })
+            ]);
+            if (entry.outputEvidence.length) {
+                const list = createElement('ul');
+                entry.outputEvidence.forEach(evidence => list.append(createElement('li', { text: evidence.text })));
+                outputEvidence.append(list);
+            } else {
+                outputEvidence.append(createElement('span', { text: 'Nessun evento GitHub associato; vale la fonte task.' }));
+            }
+            entries.append(createElement('article', { className: 'release-actual-entry' }, [
+                createElement('div', { className: 'release-actual-entry__heading' }, [
+                    createElement('strong', { text: entry.roleTask }),
+                    releaseStatusBadge(entry.status)
+                ]),
+                createElement('span', { className: 'release-actual-entry__time', text: entry.timingText }),
+                createElement('p', {}, [
+                    createElement('strong', { text: entry.topicLabel }),
+                    document.createTextNode(` · ${entry.description}`)
+                ]),
+                createElement('small', {
+                    text: [entry.referencesText, entry.workPackagesText].filter(Boolean).join(' · ')
+                }),
+                createElement('div', { className: 'release-actual-entry__source' }, [
+                    createElement('strong', { text: 'Fonte intervallo' }),
+                    createElement('span', { text: `${entry.source.reference} · ${entry.source.summary}` })
+                ]),
+                outputEvidence,
+                createElement('small', { text: entry.agentEffortText })
+            ]));
+        });
+        const openText = day.openEntryCount
+            ? ` · ${day.openEntryCount} attività in corso ${day.openEntryCount === 1 ? 'esclusa' : 'escluse'} dai totali`
+            : '';
+        elements.releaseActualDays.append(createElement('details', { className: 'release-actual-day' }, [
+            createElement('summary', {}, [
+                createElement('strong', { text: day.dateText }),
+                createElement('span', {
+                    text: `Somma task ${day.taskElapsedText} · unione ${day.dailyUnionText}${openText}`
+                })
+            ]),
+            day.unplacedText !== '0 s'
+                ? createElement('p', { className: 'muted', text: `Non collocato: ${day.unplacedText}` })
+                : null,
+            entries
+        ]));
+    });
+
+    clear(elements.releaseActualTotalsContent);
+    elements.releaseActualTotalsContent.append(createElement('p', {
+        className: 'muted release-actual-totals__note',
+        text: 'Ogni attività può contribuire a più riferimenti: questi totali sono viste indipendenti e non vanno sommati tra loro.'
+    }));
+    const githubTotals = presentation.referenceTotals.filter(item => item.kind !== 'task');
+    const appendTotals = (title, items, labelForItem) => {
+        const section = createElement('section', {}, [createElement('h4', { text: title })]);
+        if (!items.length) {
+            section.append(createElement('p', { className: 'muted', text: 'Nessun totale disponibile.' }));
+        } else {
+            const list = createElement('ul');
+            items.forEach(item => list.append(createElement('li', {
+                text: `${labelForItem(item)}: ${item.elapsedText} osservati · ${item.entryCount} voci`
+            })));
+            section.append(list);
+        }
+        elements.releaseActualTotalsContent.append(section);
+    };
+    appendTotals('Issue e PR', githubTotals, item => `${item.kind.toUpperCase()} ${item.reference}`);
+    appendTotals('Work package', presentation.workPackageTotals, item => item.label);
+    elements.releaseActualTotals.title = presentation.entryRule;
 }
 
 function renderReleaseDashboard() {
@@ -564,6 +704,8 @@ function renderReleaseDashboard() {
         );
         elements.releaseWorkPackages.append(row);
     });
+
+    renderActualWorkLog(releasePlan, locale);
 
     clear(elements.releaseGates);
     releasePlan.gates.forEach(gate => {
@@ -864,8 +1006,17 @@ function renderSelectedWeek() {
         })
         : null;
 
-    const agendaGrid = createElement('div', { className: 'agenda' });
-    agenda.days.forEach(day => {
+    const agendaGrid = createElement('div', {
+        className: agenda.placementMode === 'abstract_weekly_capacity'
+            ? 'agenda agenda--abstract'
+            : 'agenda'
+    });
+    if (agenda.placementMode === 'abstract_weekly_capacity') {
+        agendaGrid.append(createElement('p', {
+            text: 'Nessuna fascia oraria futura. Le ore della settimana sono capacità agentica equivalente per il forecast macro; gli intervalli reali compaiono soltanto nel consuntivo attestato.'
+        }));
+    }
+    if (agenda.placementMode !== 'abstract_weekly_capacity') agenda.days.forEach(day => {
         const dayCard = createElement('article', { className: 'agenda-day' }, [
             createElement('h3', { text: formatDayName(day.date, locale) })
         ]);

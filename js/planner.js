@@ -97,6 +97,12 @@ function categoryMap(database) {
     return new Map(database.categories.map(category => [category.id, category]));
 }
 
+function abstractReleaseCapacity(database) {
+    return database.releasePlan?.capacity?.scheduleMode === 'abstract_weekly_capacity'
+        ? Number(database.releasePlan.capacity.plannedWeeklyMinutes) || 0
+        : null;
+}
+
 export function effectiveTopicMinutes(topic, multipliers = {}) {
     const kind = TOPIC_KINDS.includes(topic.kind) ? topic.kind : 'other';
     const multiplier = Number(multipliers[kind]) || 1;
@@ -112,6 +118,8 @@ export function moduleEffectiveMinutes(module, multipliers = {}) {
 }
 
 export function getWeeklyCapacity(database) {
+    const abstractCapacity = abstractReleaseCapacity(database);
+    if (abstractCapacity !== null) return abstractCapacity;
     const focusIds = focusCategoryIds(database);
     return DAY_KEYS.reduce((total, day) => {
         return total + database.weekTemplate[day]
@@ -126,6 +134,7 @@ function exceptionForDate(database, date) {
 }
 
 export function getWeekTemplateForStart(database, weekStart) {
+    const hideClockCalendar = abstractReleaseCapacity(database) !== null;
     const focusIds = focusCategoryIds(database);
     const categories = categoryMap(database);
 
@@ -134,7 +143,7 @@ export function getWeekTemplateForStart(database, weekStart) {
         const dateKey = toIsoDate(date);
         const dayKey = dayKeyForDate(date);
         const exception = exceptionForDate(database, date);
-        const sessions = (database.weekTemplate[dayKey] || []).map(session => {
+        const sessions = (hideClockCalendar ? [] : (database.weekTemplate[dayKey] || [])).map(session => {
             const category = categories.get(session.categoryId);
             const isFocus = focusIds.has(session.categoryId);
             const blocked = Boolean(isFocus && exception && !exception.focusAvailable);
@@ -154,6 +163,8 @@ export function getWeekTemplateForStart(database, weekStart) {
 }
 
 export function getWeekCapacity(database, weekStart) {
+    const abstractCapacity = abstractReleaseCapacity(database);
+    if (abstractCapacity !== null) return abstractCapacity;
     return getWeekTemplateForStart(database, weekStart)
         .flatMap(day => day.sessions)
         .filter(session => session.isFocus && !session.blocked)
@@ -337,6 +348,9 @@ export function getWeekAgenda(database, moduleId, weekIndex) {
         weekEnd: toIsoDate(addDays(weekStart, 6)),
         plannedMinutes: module.weekCapacities[weekIndex],
         availableMinutes: getWeekCapacity(database, weekStart),
+        placementMode: abstractReleaseCapacity(database) !== null
+            ? 'abstract_weekly_capacity'
+            : 'clock_slots',
         allocations,
         days
     };

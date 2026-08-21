@@ -25,4 +25,16 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     assert.match(bundle, /calculateReleaseScopeMetrics/);
     assert.match(bundle, /releaseScopeInversionContributors/);
     assert.match(bundle, /summarizeScopeGateReadiness/);
+    assert.match(bundle, /calculateActualWorkMetrics/);
+    assert.match(
+        bundle,
+        /const \{ calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot \} = modelApi;/
+    );
+    assert.match(bundle, /buildActualWorkLogPresentation/);
+    assert.match(
+        bundle,
+        /const \{ buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation \} = releasePresentationApi;/
+    );
+    assert.match(bundle, /releaseActualWorkPanel/);
+    assert.match(bundle, /abstract_weekly_capacity/);
 });

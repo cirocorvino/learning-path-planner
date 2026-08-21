@@ -101,7 +101,7 @@ Le schede sotto la barra delle azioni mostrano:
 - **Impegno totale:** somma delle stime degli argomenti dopo l'applicazione dei coefficienti;
 - **Durata:** settimane necessarie includendo pause ed eventuali riduzioni di capacità;
 - **Moduli:** numero di moduli attivi e buffer;
-- **Capacità settimanale:** durata complessiva degli slot appartenenti a categorie `focus` nella settimana tipo;
+- **Capacità settimanale:** durata complessiva degli slot `focus`, oppure budget astratto dichiarato dal release plan v5;
 - **Conclusione stimata:** ultimo giorno previsto dal piano.
 
 Un avviso compare quando mancano slot focus, il target supera la capacità o una migrazione richiede attenzione.
@@ -117,6 +117,15 @@ Quando il database contiene un `releasePlan`, la dashboard separa quattro inform
 
 Le carte Pilot, MVP pubblico e Visione riportano completamento, ampiezza, versione del denominatore e data dello snapshot. Lo stesso WP mantiene lo stesso peso in tutti gli scope; cambia soltanto la membership. Se uno scope più ampio mostra un completamento superiore, un dettaglio espandibile elenca i WP esclusivi che contribuiscono all'aumento. La readiness rimane sempre separata.
 
+La sezione **Consuntivo attestato** dei release plan v5 separa:
+
+- somma degli elapsed osservati per task;
+- unione temporale giornaliera, senza doppio conteggio dei parallelismi;
+- durate attestate ancora prive di fascia oraria;
+- effort agentico equivalente, mostrato solo quando è fornito esplicitamente.
+
+Ogni giorno conserva gli intervalli originali, la fonte dei timestamp e gli eventi GitHub in una colonna distinta. Le attività ancora aperte non ricevono una fine e non entrano nei totali. Il registro descrive la copertura delle task disponibili, non un timesheet umano esaustivo.
+
 ## Diagramma di Gantt
 
 Il Gantt rappresenta i moduli in sequenza. Ogni riga riporta nome, impegno, numero di settimane, periodo e barra temporale colorata. Nei piani di rilascio può inoltre mostrare lo **stato medio dei WP collegati**: è la media aritmetica dei WP distinti associati ai topic del modulo, con elenco dei contributori e date di revisione. Non è avanzamento temporale del modulo né forecast.
@@ -126,6 +135,8 @@ Selezionando la barra di un modulo si apre il relativo dettaglio settimanale. Le
 ## Dettaglio settimanale
 
 Il dettaglio mostra una scheda per ciascuna settimana del modulo. In alto sono riepilogati gli argomenti e i minuti assegnati; sotto appare l'agenda dei sette giorni. Nei piani di rilascio le ore pianificate restano separate dallo **stato WP oggi**. Se un topic contribuisce a più WP, il riepilogo espandibile li elenca tutti con percentuale e data dello snapshot.
+
+Con `abstract_weekly_capacity` il dettaglio non disegna appuntamenti futuri: mostra le allocazioni macro e rinvia al consuntivo attestato per gli intervalli reali. Gli slot personali eventualmente presenti in un organizer generico non vengono cancellati, ma non sono usati dalla modalità release astratta.
 
 Lo stato WP è corrente: la stessa percentuale può comparire in settimane diverse e future perché non cresce automaticamente con il calendario.
 

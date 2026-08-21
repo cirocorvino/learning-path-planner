@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    buildActualWorkLogPresentation,
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation
@@ -92,4 +93,60 @@ test('presenta 74, 55 e 24 come medie dei WP distinti, non come progresso modulo
     assert.equal(instrumentation.summaryText, 'Stato medio dei WP collegati: 24%');
     assert.deepEqual(instrumentation.contributors.map(item => item.completionPercent), [15, 25, 35, 20]);
     assert.match(instrumentation.explanationText, /Non è avanzamento temporale/i);
+});
+
+test('presenta intervallo task, unione giornaliera, output GitHub ed effort agentico separati', () => {
+    const plan = {
+        workPackages: [{ id: 'security', title: 'Isolamento AI' }],
+        actualWorkLog: {
+            entryRule: 'Solo dati attestati.',
+            coverageNote: 'Copertura task Codex, non timesheet umano.',
+            semantics: {
+                agenticEffort: 'Stima separata.',
+                humanLeadTime: 'Attesa separata.',
+                observedClock: 'Intervallo task.'
+            },
+            sources: [{
+                id: 'handoff',
+                reference: 'Handoff TL',
+                summary: 'Timestamp verificati.'
+            }],
+            outputEvidence: [{
+                id: 'issue-199',
+                reference: '#199',
+                status: 'open',
+                publishedAt: '2026-08-21T17:05:49+02:00',
+                summary: 'Issue aperta.'
+            }],
+            entries: [{
+                id: 'entry-one',
+                date: '2026-08-21',
+                roleTask: 'Tech Lead',
+                topicLabel: 'Issue security',
+                workPackageIds: ['security'],
+                description: 'Definizione confine.',
+                status: 'complete',
+                references: [{ kind: 'issue', reference: '#199' }],
+                timing: {
+                    kind: 'clock_interval',
+                    startAt: '2026-08-21T17:00:57+02:00',
+                    endAt: '2026-08-21T17:02:47+02:00',
+                    timeZone: 'Europe/Rome',
+                    actualClockElapsedSeconds: 110
+                },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff',
+                outputEvidenceIds: ['issue-199']
+            }]
+        }
+    };
+
+    const presentation = buildActualWorkLogPresentation(plan);
+
+    assert.equal(presentation.summary.taskElapsedText, '1 min 50 s');
+    assert.equal(presentation.summary.dailyUnionText, '1 min 50 s');
+    assert.equal(presentation.summary.agentEffortText, 'Non attestato');
+    assert.equal(presentation.days[0].entries[0].timingText, '17:00:57–17:02:47 · 1 min 50 s');
+    assert.match(presentation.days[0].entries[0].source.reference, /Handoff TL/);
+    assert.match(presentation.days[0].entries[0].outputEvidence[0].text, /#199.*Issue aperta/);
 });
