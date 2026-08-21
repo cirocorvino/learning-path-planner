@@ -128,6 +128,23 @@
                 </div>
             </section>
 
+            <section id="releaseActualWorkPanel" class="release-panel release-panel--wide hidden"
+                aria-labelledby="releaseActualWorkTitle">
+                <div class="release-panel__heading">
+                    <div>
+                        <h3 id="releaseActualWorkTitle">Consuntivo attestato</h3>
+                        <p id="releaseActualCoverage" class="muted"></p>
+                    </div>
+                </div>
+                <div id="releaseActualSemantics" class="release-actual-semantics"></div>
+                <div id="releaseActualSummary" class="release-actual-summary"></div>
+                <div id="releaseActualDays" class="release-actual-days"></div>
+                <details id="releaseActualTotals" class="release-actual-totals">
+                    <summary>Totali per issue, PR e work package</summary>
+                    <div id="releaseActualTotalsContent"></div>
+                </details>
+            </section>
+
             <div class="release-dashboard__grid">
                 <section class="release-panel" aria-labelledby="gatesTitle">
                     <h3 id="gatesTitle">Gate</h3>

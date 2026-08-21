@@ -7,9 +7,13 @@
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
         const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-        const RELEASE_PLAN_SCHEMA_VERSION = 4;
+        const RELEASE_PLAN_SCHEMA_VERSION = 5;
 
-        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, RELEASE_PLAN_SCHEMA_VERSION];
+        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, 4, RELEASE_PLAN_SCHEMA_VERSION];
+        const RELEASE_SCHEDULE_MODES = ['clock_slots', 'abstract_weekly_capacity'];
+        const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
+        const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
+        const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
         const DELIVERY_DEPENDENCY_TYPES = [
             'required_before_start',
             'overlap_after_design',
@@ -206,6 +210,17 @@
                 throw new Error(`${path} deve usare un orario HH:MM valido.`);
             }
             return time;
+        }
+
+        function validTimestamp(value, path) {
+            const timestamp = String(value ?? '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)) {
+                throw new Error(`${path} deve usare un timestamp ISO con secondi e offset.`);
+            }
+            if (!Number.isFinite(Date.parse(timestamp))) {
+                throw new Error(`${path} non contiene un timestamp valido.`);
+            }
+            return timestamp;
         }
 
         function timeToMinutes(value) {
@@ -470,6 +485,210 @@
                     observedAt: optionalDate(item.observedAt, `${itemPath}.observedAt`)
                 };
             });
+        }
+
+        function normalizeActualWorkLog(input, path, topicIds, workPackageIds) {
+            const source = requireObject(input, path);
+            const semanticsInput = requireObject(source.semantics, `${path}.semantics`);
+            const sources = requireArray(source.sources, `${path}.sources`).map((item, index) => {
+                const itemPath = `${path}.sources[${index}]`;
+                requireObject(item, itemPath);
+                return {
+                    id: validId(item.id, `${itemPath}.id`),
+                    type: requiredString(item.type, `${itemPath}.type`, 80),
+                    reference: requiredString(item.reference, `${itemPath}.reference`, 500),
+                    summary: requiredString(item.summary, `${itemPath}.summary`, 1000),
+                    observedAt: validDate(item.observedAt, `${itemPath}.observedAt`)
+                };
+            });
+            uniqueIds(sources, `${path}.sources`);
+            const sourceIds = new Set(sources.map(item => item.id));
+            const outputEvidence = requireArray(source.outputEvidence, `${path}.outputEvidence`).map((item, index) => {
+                const itemPath = `${path}.outputEvidence[${index}]`;
+                requireObject(item, itemPath);
+                const publishedAt = validTimestamp(item.publishedAt, `${itemPath}.publishedAt`);
+                const finalizedAt = item.finalizedAt
+                    ? validTimestamp(item.finalizedAt, `${itemPath}.finalizedAt`)
+                    : '';
+                if (finalizedAt && Date.parse(finalizedAt) < Date.parse(publishedAt)) {
+                    throw new Error(`${itemPath}.finalizedAt precede publishedAt.`);
+                }
+                return {
+                    id: validId(item.id, `${itemPath}.id`),
+                    type: requiredString(item.type, `${itemPath}.type`, 80),
+                    reference: requiredString(item.reference, `${itemPath}.reference`, 240),
+                    status: requiredString(item.status, `${itemPath}.status`, 80),
+                    publishedAt,
+                    finalizedAt,
+                    summary: requiredString(item.summary, `${itemPath}.summary`, 1500)
+                };
+            });
+            uniqueIds(outputEvidence, `${path}.outputEvidence`);
+            const outputEvidenceIds = new Set(outputEvidence.map(item => item.id));
+
+            const entries = requireArray(source.entries, `${path}.entries`).map((entry, index) => {
+                const itemPath = `${path}.entries[${index}]`;
+                requireObject(entry, itemPath);
+                const topicId = entry.topicId ? validId(entry.topicId, `${itemPath}.topicId`) : '';
+                if (topicId && !topicIds.has(topicId)) {
+                    throw new Error(`${itemPath}.topicId contiene l'argomento sconosciuto ${topicId}.`);
+                }
+                const mappedWorkPackageIds = normalizeStringList(
+                    entry.workPackageIds,
+                    `${itemPath}.workPackageIds`,
+                    120
+                ).map((workPackageId, workPackageIndex) => validId(
+                    workPackageId,
+                    `${itemPath}.workPackageIds[${workPackageIndex}]`
+                ));
+                mappedWorkPackageIds.forEach(workPackageId => {
+                    if (!workPackageIds.has(workPackageId)) {
+                        throw new Error(`${itemPath}.workPackageIds contiene il WP sconosciuto ${workPackageId}.`);
+                    }
+                });
+
+                const references = requireArray(entry.references, `${itemPath}.references`).map((reference, referenceIndex) => {
+                    const referencePath = `${itemPath}.references[${referenceIndex}]`;
+                    requireObject(reference, referencePath);
+                    const kind = requiredString(reference.kind, `${referencePath}.kind`, 40);
+                    if (!ACTUAL_WORK_REFERENCE_KINDS.includes(kind)) {
+                        throw new Error(`${referencePath}.kind non è supportato.`);
+                    }
+                    return {
+                        kind,
+                        reference: requiredString(reference.reference, `${referencePath}.reference`, 240)
+                    };
+                });
+                if (references.length === 0) {
+                    throw new Error(`${itemPath}.references deve contenere almeno task, issue o PR.`);
+                }
+
+                const timingInput = requireObject(entry.timing, `${itemPath}.timing`);
+                const timingKind = requiredString(timingInput.kind, `${itemPath}.timing.kind`, 40);
+                if (!ACTUAL_WORK_TIMING_KINDS.includes(timingKind)) {
+                    throw new Error(`${itemPath}.timing.kind non è supportato.`);
+                }
+                let timing;
+                if (timingKind === 'clock_interval') {
+                    const startAt = validTimestamp(timingInput.startAt, `${itemPath}.timing.startAt`);
+                    const endAt = validTimestamp(timingInput.endAt, `${itemPath}.timing.endAt`);
+                    const actualClockElapsedSeconds = finitePositive(
+                        timingInput.actualClockElapsedSeconds,
+                        `${itemPath}.timing.actualClockElapsedSeconds`,
+                        { integer: true }
+                    );
+                    const observedDuration = (Date.parse(endAt) - Date.parse(startAt)) / 1000;
+                    if (observedDuration <= 0 || !Number.isInteger(observedDuration)) {
+                        throw new Error(`${itemPath}.timing deve terminare dopo l'inizio.`);
+                    }
+                    if (observedDuration !== actualClockElapsedSeconds) {
+                        throw new Error(`${itemPath}.timing.actualClockElapsedSeconds diverge dall'intervallo di orologio.`);
+                    }
+                    const startOffset = startAt.endsWith('Z') ? 'Z' : startAt.slice(-6);
+                    const endOffset = endAt.endsWith('Z') ? 'Z' : endAt.slice(-6);
+                    if (startOffset !== endOffset) {
+                        throw new Error(`${itemPath}.timing deve essere diviso in due intervalli al cambio di offset.`);
+                    }
+                    if (startAt.slice(0, 10) !== validDate(entry.date, `${itemPath}.date`)) {
+                        throw new Error(`${itemPath}.date deve coincidere con la data locale di inizio.`);
+                    }
+                    timing = {
+                        kind: timingKind,
+                        startAt,
+                        endAt,
+                        timeZone: normalizeTimeZone(timingInput.timeZone),
+                        actualClockElapsedSeconds
+                    };
+                } else if (timingKind === 'unplaced_duration') {
+                    if (
+                        String(timingInput.startAt ?? '').trim()
+                        || String(timingInput.endAt ?? '').trim()
+                        || Object.hasOwn(timingInput, 'actualClockElapsedSeconds')
+                    ) {
+                        throw new Error(`${itemPath}.timing non può contenere un intervallo per una durata non collocata.`);
+                    }
+                    timing = {
+                        kind: timingKind,
+                        attestedDurationSeconds: finitePositive(
+                            timingInput.attestedDurationSeconds,
+                            `${itemPath}.timing.attestedDurationSeconds`,
+                            { integer: true }
+                        )
+                    };
+                } else {
+                    if (
+                        String(timingInput.endAt ?? '').trim()
+                        || Object.hasOwn(timingInput, 'actualClockElapsedSeconds')
+                        || Object.hasOwn(timingInput, 'attestedDurationSeconds')
+                    ) {
+                        throw new Error(`${itemPath}.timing non può chiudere o quantificare un intervallo ancora aperto.`);
+                    }
+                    const startAt = validTimestamp(timingInput.startAt, `${itemPath}.timing.startAt`);
+                    if (startAt.slice(0, 10) !== validDate(entry.date, `${itemPath}.date`)) {
+                        throw new Error(`${itemPath}.date deve coincidere con la data locale di inizio.`);
+                    }
+                    timing = {
+                        kind: timingKind,
+                        startAt,
+                        timeZone: normalizeTimeZone(timingInput.timeZone)
+                    };
+                }
+                const timestampSourceId = validId(entry.timestampSourceId, `${itemPath}.timestampSourceId`);
+                if (!sourceIds.has(timestampSourceId)) {
+                    throw new Error(`${itemPath}.timestampSourceId contiene la fonte sconosciuta ${timestampSourceId}.`);
+                }
+                const mappedOutputEvidenceIds = normalizeStringList(
+                    entry.outputEvidenceIds,
+                    `${itemPath}.outputEvidenceIds`,
+                    120
+                ).map((evidenceId, evidenceIndex) => validId(
+                    evidenceId,
+                    `${itemPath}.outputEvidenceIds[${evidenceIndex}]`
+                ));
+                mappedOutputEvidenceIds.forEach(evidenceId => {
+                    if (!outputEvidenceIds.has(evidenceId)) {
+                        throw new Error(`${itemPath}.outputEvidenceIds contiene l'evidenza sconosciuta ${evidenceId}.`);
+                    }
+                });
+                const agentEffortEquivalentMinutes = entry.agentEffortEquivalentMinutes === null
+                    || entry.agentEffortEquivalentMinutes === undefined
+                    ? null
+                    : finitePositive(
+                        entry.agentEffortEquivalentMinutes,
+                        `${itemPath}.agentEffortEquivalentMinutes`,
+                        { integer: true }
+                    );
+                return {
+                    id: validId(entry.id, `${itemPath}.id`),
+                    date: validDate(entry.date, `${itemPath}.date`),
+                    roleTask: requiredString(entry.roleTask, `${itemPath}.roleTask`, 240),
+                    topicId,
+                    topicLabel: requiredString(entry.topicLabel, `${itemPath}.topicLabel`, 300),
+                    workPackageIds: mappedWorkPackageIds,
+                    description: requiredString(entry.description, `${itemPath}.description`, 1000),
+                    status: validStatus(entry.status, `${itemPath}.status`),
+                    references,
+                    timing,
+                    agentEffortEquivalentMinutes,
+                    timestampSourceId,
+                    outputEvidenceIds: mappedOutputEvidenceIds
+                };
+            });
+            uniqueIds(entries, `${path}.entries`);
+
+            return {
+                version: requiredString(source.version, `${path}.version`, 120),
+                entryRule: requiredString(source.entryRule, `${path}.entryRule`, 1500),
+                coverageNote: requiredString(source.coverageNote, `${path}.coverageNote`, 1500),
+                semantics: {
+                    agenticEffort: requiredString(semanticsInput.agenticEffort, `${path}.semantics.agenticEffort`, 1000),
+                    humanLeadTime: requiredString(semanticsInput.humanLeadTime, `${path}.semantics.humanLeadTime`, 1000),
+                    observedClock: requiredString(semanticsInput.observedClock, `${path}.semantics.observedClock`, 1000)
+                },
+                sources,
+                outputEvidence,
+                entries
+            };
         }
 
         function normalizeExternalLeadTimes(input, path) {
@@ -789,6 +1008,175 @@
             };
         }
 
+        function localTimestampSeconds(timestamp) {
+            const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(timestamp);
+            return Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4]),
+                Number(match[5]),
+                Number(match[6])
+            ) / 1000;
+        }
+
+        function splitClockTimingByLocalDay(timing) {
+            const segments = [];
+            let cursor = localTimestampSeconds(timing.startAt);
+            const end = localTimestampSeconds(timing.endAt);
+            while (cursor < end) {
+                const cursorDate = new Date(cursor * 1000);
+                const nextMidnight = Date.UTC(
+                    cursorDate.getUTCFullYear(),
+                    cursorDate.getUTCMonth(),
+                    cursorDate.getUTCDate() + 1
+                ) / 1000;
+                const segmentEnd = Math.min(end, nextMidnight);
+                segments.push({
+                    date: cursorDate.toISOString().slice(0, 10),
+                    startSecond: cursor,
+                    endSecond: segmentEnd,
+                    elapsedSeconds: segmentEnd - cursor
+                });
+                cursor = segmentEnd;
+            }
+            return segments;
+        }
+
+        function mergedIntervalSeconds(intervals) {
+            const sorted = [...intervals].sort((left, right) => left.startSecond - right.startSecond);
+            let total = 0;
+            let currentStart = null;
+            let currentEnd = null;
+            sorted.forEach(interval => {
+                if (currentStart === null) {
+                    currentStart = interval.startSecond;
+                    currentEnd = interval.endSecond;
+                    return;
+                }
+                if (interval.startSecond <= currentEnd) {
+                    currentEnd = Math.max(currentEnd, interval.endSecond);
+                    return;
+                }
+                total += currentEnd - currentStart;
+                currentStart = interval.startSecond;
+                currentEnd = interval.endSecond;
+            });
+            return currentStart === null ? 0 : total + currentEnd - currentStart;
+        }
+
+        function calculateActualWorkMetrics(releasePlan) {
+            const entries = Array.isArray(releasePlan?.actualWorkLog?.entries)
+                ? releasePlan.actualWorkLog.entries
+                : [];
+            const days = new Map();
+            const referenceTotals = new Map();
+            const workPackageTotals = new Map();
+            let actualClockElapsedSeconds = 0;
+            let attestedUnplacedSeconds = 0;
+            let agentEffortEquivalentMinutes = 0;
+            let agentEffortEntryCount = 0;
+
+            function dayFor(date) {
+                if (!days.has(date)) {
+                    days.set(date, {
+                        date,
+                        entries: [],
+                        clockIntervals: [],
+                        taskElapsedSeconds: 0,
+                        unplacedElapsedSeconds: 0,
+                        openEntryCount: 0
+                    });
+                }
+                return days.get(date);
+            }
+
+            function addGroupedTotal(map, key, data, elapsedSeconds, entryId) {
+                if (!map.has(key)) map.set(key, { ...data, elapsedSeconds: 0, entryIds: [] });
+                const item = map.get(key);
+                item.elapsedSeconds += elapsedSeconds;
+                if (!item.entryIds.includes(entryId)) item.entryIds.push(entryId);
+            }
+
+            entries.forEach(entry => {
+                const timing = entry.timing;
+                const elapsedSeconds = timing.kind === 'clock_interval'
+                    ? timing.actualClockElapsedSeconds
+                    : timing.kind === 'unplaced_duration'
+                        ? timing.attestedDurationSeconds
+                        : 0;
+
+                if (entry.agentEffortEquivalentMinutes !== null) {
+                    agentEffortEquivalentMinutes += entry.agentEffortEquivalentMinutes;
+                    agentEffortEntryCount += 1;
+                }
+                entry.references.forEach(reference => addGroupedTotal(
+                    referenceTotals,
+                    `${reference.kind}:${reference.reference}`,
+                    reference,
+                    elapsedSeconds,
+                    entry.id
+                ));
+                entry.workPackageIds.forEach(workPackageId => addGroupedTotal(
+                    workPackageTotals,
+                    workPackageId,
+                    { workPackageId },
+                    elapsedSeconds,
+                    entry.id
+                ));
+
+                if (timing.kind === 'clock_interval') {
+                    actualClockElapsedSeconds += elapsedSeconds;
+                    splitClockTimingByLocalDay(timing).forEach(segment => {
+                        const day = dayFor(segment.date);
+                        day.clockIntervals.push(segment);
+                        day.taskElapsedSeconds += segment.elapsedSeconds;
+                        if (!day.entries.includes(entry)) day.entries.push(entry);
+                    });
+                } else if (timing.kind === 'unplaced_duration') {
+                    attestedUnplacedSeconds += elapsedSeconds;
+                    const day = dayFor(entry.date);
+                    day.taskElapsedSeconds += elapsedSeconds;
+                    day.unplacedElapsedSeconds += elapsedSeconds;
+                    day.entries.push(entry);
+                } else {
+                    const day = dayFor(entry.date);
+                    day.openEntryCount += 1;
+                    day.entries.push(entry);
+                }
+            });
+
+            const daily = [...days.values()]
+                .sort((left, right) => left.date.localeCompare(right.date))
+                .map(day => ({
+                    date: day.date,
+                    entries: day.entries.sort((left, right) => {
+                        const leftStart = left.timing.startAt || `${left.date}T23:59:59Z`;
+                        const rightStart = right.timing.startAt || `${right.date}T23:59:59Z`;
+                        return leftStart.localeCompare(rightStart);
+                    }),
+                    taskElapsedSeconds: day.taskElapsedSeconds,
+                    dailyUnionElapsedSeconds: mergedIntervalSeconds(day.clockIntervals),
+                    unplacedElapsedSeconds: day.unplacedElapsedSeconds,
+                    openEntryCount: day.openEntryCount
+                }));
+
+            return {
+                entryCount: entries.length,
+                closedEntryCount: entries.filter(entry => entry.timing.kind !== 'open_interval').length,
+                openEntryCount: entries.filter(entry => entry.timing.kind === 'open_interval').length,
+                actualClockElapsedSeconds,
+                attestedUnplacedSeconds,
+                taskElapsedSeconds: actualClockElapsedSeconds + attestedUnplacedSeconds,
+                dailyUnionElapsedSeconds: daily.reduce((total, day) => total + day.dailyUnionElapsedSeconds, 0),
+                agentEffortEquivalentMinutes: agentEffortEntryCount ? agentEffortEquivalentMinutes : null,
+                agentEffortEntryCount,
+                daily,
+                referenceTotals: [...referenceTotals.values()],
+                workPackageTotals: [...workPackageTotals.values()]
+            };
+        }
+
         function calculateReleaseScopeMetrics(releasePlan, scopeId) {
             const workPackages = Array.isArray(releasePlan?.workPackages) ? releasePlan.workPackages : [];
             const scope = (Array.isArray(releasePlan?.scopes) ? releasePlan.scopes : [])
@@ -929,6 +1317,7 @@
             const hasAdaptiveDelivery = releasePlanSchemaVersion >= 2;
             const hasMetricSemantics = releasePlanSchemaVersion >= 3;
             const hasAbsoluteFunctionalWeights = releasePlanSchemaVersion >= 4;
+            const hasAttestedActualWork = releasePlanSchemaVersion >= 5;
 
             const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
             const sourceSnapshot = {
@@ -991,6 +1380,31 @@
                 ),
                 assumptions: normalizeStringList(capacityInput.assumptions, 'releasePlan.capacity.assumptions', 1000)
             };
+            if (hasAttestedActualWork) {
+                const scheduleMode = requiredString(
+                    capacityInput.scheduleMode,
+                    'releasePlan.capacity.scheduleMode',
+                    80
+                );
+                const effortUnit = requiredString(
+                    capacityInput.effortUnit,
+                    'releasePlan.capacity.effortUnit',
+                    80
+                );
+                if (!RELEASE_SCHEDULE_MODES.includes(scheduleMode)) {
+                    throw new Error('releasePlan.capacity.scheduleMode non è supportato.');
+                }
+                if (!RELEASE_EFFORT_UNITS.includes(effortUnit)) {
+                    throw new Error('releasePlan.capacity.effortUnit non è supportato.');
+                }
+                if (
+                    (scheduleMode === 'abstract_weekly_capacity' && effortUnit !== 'agentic_equivalent_minutes')
+                    || (scheduleMode === 'clock_slots' && effortUnit !== 'clock_minutes')
+                ) {
+                    throw new Error('releasePlan.capacity.scheduleMode ed effortUnit non sono coerenti.');
+                }
+                Object.assign(capacity, { scheduleMode, effortUnit });
+            }
             if (capacity.plannedWeeklyMinutes + capacity.reserveWeeklyMinutes > capacity.grossWeeklyMinutes) {
                 throw new Error('La capacità pianificata e la riserva superano la capacità settimanale lorda.');
             }
@@ -1012,6 +1426,7 @@
             const absoluteWeightModel = hasAbsoluteFunctionalWeights
                 ? normalizeAbsoluteWeightModel(source.absoluteWeightModel, 'releasePlan.absoluteWeightModel')
                 : null;
+            let actualWorkLog = null;
 
             const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
                 const path = `releasePlan.scopes[${index}]`;
@@ -1175,6 +1590,14 @@
                     }
                 });
             });
+            if (hasAttestedActualWork) {
+                actualWorkLog = normalizeActualWorkLog(
+                    source.actualWorkLog,
+                    'releasePlan.actualWorkLog',
+                    topicIds,
+                    workPackageIds
+                );
+            }
 
             if (hasAbsoluteFunctionalWeights) {
                 if (!scopeIds.has(absoluteWeightModel.visionScopeId)) {
@@ -1478,6 +1901,7 @@
                 scopes,
                 ...(hasMetricSemantics ? { metricSemantics } : {}),
                 ...(hasAbsoluteFunctionalWeights ? { absoluteWeightModel } : {}),
+                ...(hasAttestedActualWork ? { actualWorkLog } : {}),
                 ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
                 workPackages,
                 gates,
@@ -1757,7 +2181,7 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateActualWorkMetrics, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
@@ -1860,6 +2284,12 @@
             return new Map(database.categories.map(category => [category.id, category]));
         }
 
+        function abstractReleaseCapacity(database) {
+            return database.releasePlan?.capacity?.scheduleMode === 'abstract_weekly_capacity'
+                ? Number(database.releasePlan.capacity.plannedWeeklyMinutes) || 0
+                : null;
+        }
+
         function effectiveTopicMinutes(topic, multipliers = {}) {
             const kind = TOPIC_KINDS.includes(topic.kind) ? topic.kind : 'other';
             const multiplier = Number(multipliers[kind]) || 1;
@@ -1875,6 +2305,8 @@
         }
 
         function getWeeklyCapacity(database) {
+            const abstractCapacity = abstractReleaseCapacity(database);
+            if (abstractCapacity !== null) return abstractCapacity;
             const focusIds = focusCategoryIds(database);
             return DAY_KEYS.reduce((total, day) => {
                 return total + database.weekTemplate[day]
@@ -1889,6 +2321,7 @@
         }
 
         function getWeekTemplateForStart(database, weekStart) {
+            const hideClockCalendar = abstractReleaseCapacity(database) !== null;
             const focusIds = focusCategoryIds(database);
             const categories = categoryMap(database);
 
@@ -1897,7 +2330,7 @@
                 const dateKey = toIsoDate(date);
                 const dayKey = dayKeyForDate(date);
                 const exception = exceptionForDate(database, date);
-                const sessions = (database.weekTemplate[dayKey] || []).map(session => {
+                const sessions = (hideClockCalendar ? [] : (database.weekTemplate[dayKey] || [])).map(session => {
                     const category = categories.get(session.categoryId);
                     const isFocus = focusIds.has(session.categoryId);
                     const blocked = Boolean(isFocus && exception && !exception.focusAvailable);
@@ -1917,6 +2350,8 @@
         }
 
         function getWeekCapacity(database, weekStart) {
+            const abstractCapacity = abstractReleaseCapacity(database);
+            if (abstractCapacity !== null) return abstractCapacity;
             return getWeekTemplateForStart(database, weekStart)
                 .flatMap(day => day.sessions)
                 .filter(session => session.isFocus && !session.blocked)
@@ -2100,6 +2535,9 @@
                 weekEnd: toIsoDate(addDays(weekStart, 6)),
                 plannedMinutes: module.weekCapacities[weekIndex],
                 availableMinutes: getWeekCapacity(database, weekStart),
+                placementMode: abstractReleaseCapacity(database) !== null
+                    ? 'abstract_weekly_capacity'
+                    : 'clock_slots',
                 allocations,
                 days
             };
@@ -2136,7 +2574,7 @@
     })();
 
     const releasePresentationApi = (() => {
-        const { releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
+        const { calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
         const { formatDate, formatDuration } = plannerApi;
 
         function contributorViewModel(workPackage, locale) {
@@ -2148,6 +2586,156 @@
                 criticalPath: workPackage.criticalPath === true,
                 snapshotDate,
                 text: `${workPackage.title}: ${workPackage.completionPercent}% · snapshot ${snapshotDate}`
+            };
+        }
+
+        function formatElapsedSeconds(value) {
+            const totalSeconds = Math.max(0, Math.round(Number(value) || 0));
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return [
+                hours ? `${hours} h` : '',
+                minutes ? `${minutes} min` : '',
+                seconds || (!hours && !minutes) ? `${seconds} s` : ''
+            ].filter(Boolean).join(' ');
+        }
+
+        function formatClock(timestamp, locale, timeZone) {
+            return new Intl.DateTimeFormat(locale, {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hourCycle: 'h23',
+                timeZone
+            }).format(new Date(timestamp));
+        }
+
+        function formatOutputTimestamp(timestamp, locale, timeZone) {
+            if (!timestamp) return '';
+            return new Intl.DateTimeFormat(locale, {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hourCycle: 'h23',
+                timeZone
+            }).format(new Date(timestamp));
+        }
+
+        function actualEntryViewModel(entry, sourceById, outputEvidenceById, workPackageById, locale, outputTimeZone) {
+            const timing = entry.timing;
+            let timingText;
+            let elapsedSeconds = 0;
+            if (timing.kind === 'clock_interval') {
+                elapsedSeconds = timing.actualClockElapsedSeconds;
+                timingText = `${formatClock(timing.startAt, locale, timing.timeZone)}–${formatClock(timing.endAt, locale, timing.timeZone)} · ${formatElapsedSeconds(elapsedSeconds)}`;
+            } else if (timing.kind === 'unplaced_duration') {
+                elapsedSeconds = timing.attestedDurationSeconds;
+                timingText = `Durata attestata non collocata · ${formatElapsedSeconds(elapsedSeconds)}`;
+            } else {
+                timingText = `Dalle ${formatClock(timing.startAt, locale, timing.timeZone)} · in corso`;
+            }
+            return {
+                id: entry.id,
+                roleTask: entry.roleTask,
+                topicLabel: entry.topicLabel,
+                description: entry.description,
+                status: entry.status,
+                timingKind: timing.kind,
+                timingText,
+                elapsedSeconds,
+                referencesText: entry.references.map(reference => `${reference.kind.toUpperCase()} ${reference.reference}`).join(' · '),
+                workPackagesText: entry.workPackageIds
+                    .map(workPackageId => workPackageById.get(workPackageId)?.title || workPackageId)
+                    .join(' · '),
+                agentEffortText: entry.agentEffortEquivalentMinutes === null
+                    ? 'Effort agentico non attestato'
+                    : `Effort agentico: ${formatDuration(entry.agentEffortEquivalentMinutes)}`,
+                source: sourceById.get(entry.timestampSourceId),
+                outputEvidence: entry.outputEvidenceIds.map(evidenceId => {
+                    const evidence = outputEvidenceById.get(evidenceId);
+                    return {
+                        ...evidence,
+                        publishedText: formatOutputTimestamp(evidence.publishedAt, locale, outputTimeZone),
+                        finalizedText: formatOutputTimestamp(evidence.finalizedAt, locale, outputTimeZone),
+                        text: [
+                            `${evidence.reference} · ${evidence.status}`,
+                            `pubblicazione ${formatOutputTimestamp(evidence.publishedAt, locale, outputTimeZone)}`,
+                            evidence.finalizedAt
+                                ? `chiusura ${formatOutputTimestamp(evidence.finalizedAt, locale, outputTimeZone)}`
+                                : '',
+                            evidence.summary
+                        ].filter(Boolean).join(' · ')
+                    };
+                })
+            };
+        }
+
+        function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', outputTimeZone = 'Europe/Rome') {
+            const log = releasePlan?.actualWorkLog;
+            if (!log) return null;
+            const metrics = calculateActualWorkMetrics(releasePlan);
+            const sourceById = new Map(log.sources.map(source => [source.id, source]));
+            const outputEvidenceById = new Map(log.outputEvidence.map(item => [item.id, item]));
+            const workPackageById = new Map(releasePlan.workPackages.map(workPackage => [workPackage.id, workPackage]));
+            const entryById = new Map(log.entries.map(entry => [entry.id, entry]));
+            const totals = items => items
+                .filter(item => item.elapsedSeconds > 0)
+                .sort((left, right) => right.elapsedSeconds - left.elapsedSeconds)
+                .map(item => ({
+                    ...item,
+                    elapsedText: formatElapsedSeconds(item.elapsedSeconds),
+                    entryCount: item.entryIds.length
+                }));
+
+            return {
+                empty: log.entries.length === 0,
+                emptyText: 'Nessuna attività attestata registrata.',
+                coverageNote: log.coverageNote,
+                entryRule: log.entryRule,
+                semantics: [
+                    { label: 'Effort agentico', text: log.semantics.agenticEffort },
+                    { label: 'Lead time umano', text: log.semantics.humanLeadTime },
+                    { label: 'Intervallo reale', text: log.semantics.observedClock }
+                ],
+                summary: {
+                    taskElapsedText: formatElapsedSeconds(metrics.taskElapsedSeconds),
+                    dailyUnionText: formatElapsedSeconds(metrics.dailyUnionElapsedSeconds),
+                    unplacedText: formatElapsedSeconds(metrics.attestedUnplacedSeconds),
+                    agentEffortText: metrics.agentEffortEquivalentMinutes === null
+                        ? 'Non attestato'
+                        : formatDuration(metrics.agentEffortEquivalentMinutes),
+                    closedEntryCount: metrics.closedEntryCount,
+                    openEntryCount: metrics.openEntryCount
+                },
+                days: metrics.daily.map(day => ({
+                    date: day.date,
+                    dateText: formatDate(day.date, locale, { year: true }),
+                    taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
+                    dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
+                    unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
+                    openEntryCount: day.openEntryCount,
+                    entries: day.entries.map(entry => actualEntryViewModel(
+                        entry,
+                        sourceById,
+                        outputEvidenceById,
+                        workPackageById,
+                        locale,
+                        outputTimeZone
+                    ))
+                })),
+                referenceTotals: totals(metrics.referenceTotals),
+                workPackageTotals: totals(metrics.workPackageTotals).map(item => ({
+                    ...item,
+                    label: workPackageById.get(item.workPackageId)?.title || item.workPackageId
+                })),
+                sourceByEntry: new Map([...entryById].map(([entryId, entry]) => [
+                    entryId,
+                    sourceById.get(entry.timestampSourceId)
+                ]))
             };
         }
 
@@ -2214,7 +2802,7 @@
             };
         }
 
-        return { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
+        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
     })();
 
     const configurationApi = (() => {
@@ -2955,7 +3543,7 @@
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
-        const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
+        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -2994,6 +3582,13 @@
             'releaseCriticalBranches',
             'releaseForecasts',
             'releaseWorkPackages',
+            'releaseActualWorkPanel',
+            'releaseActualCoverage',
+            'releaseActualSemantics',
+            'releaseActualSummary',
+            'releaseActualDays',
+            'releaseActualTotals',
+            'releaseActualTotalsContent',
             'releaseGates',
             'releaseMilestones',
             'releaseHistory',
@@ -3209,6 +3804,138 @@
             const list = createElement('ul');
             items.forEach(item => list.append(createElement('li', { text: item })));
             return createElement('section', {}, [createElement('h4', { text: title }), list]);
+        }
+
+        function actualSummaryMetric(label, value, detail = '') {
+            return createElement('article', {}, [
+                createElement('span', { text: label }),
+                createElement('strong', { text: value }),
+                detail ? createElement('small', { text: detail }) : null
+            ]);
+        }
+
+        function renderActualWorkLog(releasePlan, locale) {
+            const presentation = buildActualWorkLogPresentation(
+                releasePlan,
+                locale,
+                currentDatabase.metadata.timeZone
+            );
+            setHidden(elements.releaseActualWorkPanel, !presentation);
+            if (!presentation) return;
+
+            elements.releaseActualCoverage.textContent = presentation.coverageNote;
+            clear(elements.releaseActualSemantics);
+            presentation.semantics.forEach(item => {
+                elements.releaseActualSemantics.append(createElement('article', {}, [
+                    createElement('strong', { text: item.label }),
+                    createElement('p', { text: item.text })
+                ]));
+            });
+
+            clear(elements.releaseActualSummary);
+            elements.releaseActualSummary.append(
+                actualSummaryMetric(
+                    'Somma per task',
+                    presentation.summary.taskElapsedText,
+                    `${presentation.summary.closedEntryCount} intervalli o durate chiusi`
+                ),
+                actualSummaryMetric(
+                    'Unione giornaliera',
+                    presentation.summary.dailyUnionText,
+                    'Le sovrapposizioni parallele sono contate una sola volta'
+                ),
+                actualSummaryMetric(
+                    'Durate non collocate',
+                    presentation.summary.unplacedText,
+                    'Non diventano fasce orarie'
+                ),
+                actualSummaryMetric(
+                    'Effort agentico equivalente',
+                    presentation.summary.agentEffortText,
+                    'Non derivato dal tempo di orologio'
+                )
+            );
+
+            clear(elements.releaseActualDays);
+            if (presentation.empty) {
+                elements.releaseActualDays.append(createElement('p', {
+                    className: 'muted',
+                    text: presentation.emptyText
+                }));
+            }
+            presentation.days.forEach(day => {
+                const entries = createElement('div', { className: 'release-actual-day__entries' });
+                day.entries.forEach(entry => {
+                    const outputEvidence = createElement('div', { className: 'release-actual-entry__evidence' }, [
+                        createElement('strong', { text: 'Evidenza output' })
+                    ]);
+                    if (entry.outputEvidence.length) {
+                        const list = createElement('ul');
+                        entry.outputEvidence.forEach(evidence => list.append(createElement('li', { text: evidence.text })));
+                        outputEvidence.append(list);
+                    } else {
+                        outputEvidence.append(createElement('span', { text: 'Nessun evento GitHub associato; vale la fonte task.' }));
+                    }
+                    entries.append(createElement('article', { className: 'release-actual-entry' }, [
+                        createElement('div', { className: 'release-actual-entry__heading' }, [
+                            createElement('strong', { text: entry.roleTask }),
+                            releaseStatusBadge(entry.status)
+                        ]),
+                        createElement('span', { className: 'release-actual-entry__time', text: entry.timingText }),
+                        createElement('p', {}, [
+                            createElement('strong', { text: entry.topicLabel }),
+                            document.createTextNode(` · ${entry.description}`)
+                        ]),
+                        createElement('small', {
+                            text: [entry.referencesText, entry.workPackagesText].filter(Boolean).join(' · ')
+                        }),
+                        createElement('div', { className: 'release-actual-entry__source' }, [
+                            createElement('strong', { text: 'Fonte intervallo' }),
+                            createElement('span', { text: `${entry.source.reference} · ${entry.source.summary}` })
+                        ]),
+                        outputEvidence,
+                        createElement('small', { text: entry.agentEffortText })
+                    ]));
+                });
+                const openText = day.openEntryCount
+                    ? ` · ${day.openEntryCount} attività in corso ${day.openEntryCount === 1 ? 'esclusa' : 'escluse'} dai totali`
+                    : '';
+                elements.releaseActualDays.append(createElement('details', { className: 'release-actual-day' }, [
+                    createElement('summary', {}, [
+                        createElement('strong', { text: day.dateText }),
+                        createElement('span', {
+                            text: `Somma task ${day.taskElapsedText} · unione ${day.dailyUnionText}${openText}`
+                        })
+                    ]),
+                    day.unplacedText !== '0 s'
+                        ? createElement('p', { className: 'muted', text: `Non collocato: ${day.unplacedText}` })
+                        : null,
+                    entries
+                ]));
+            });
+
+            clear(elements.releaseActualTotalsContent);
+            elements.releaseActualTotalsContent.append(createElement('p', {
+                className: 'muted release-actual-totals__note',
+                text: 'Ogni attività può contribuire a più riferimenti: questi totali sono viste indipendenti e non vanno sommati tra loro.'
+            }));
+            const githubTotals = presentation.referenceTotals.filter(item => item.kind !== 'task');
+            const appendTotals = (title, items, labelForItem) => {
+                const section = createElement('section', {}, [createElement('h4', { text: title })]);
+                if (!items.length) {
+                    section.append(createElement('p', { className: 'muted', text: 'Nessun totale disponibile.' }));
+                } else {
+                    const list = createElement('ul');
+                    items.forEach(item => list.append(createElement('li', {
+                        text: `${labelForItem(item)}: ${item.elapsedText} osservati · ${item.entryCount} voci`
+                    })));
+                    section.append(list);
+                }
+                elements.releaseActualTotalsContent.append(section);
+            };
+            appendTotals('Issue e PR', githubTotals, item => `${item.kind.toUpperCase()} ${item.reference}`);
+            appendTotals('Work package', presentation.workPackageTotals, item => item.label);
+            elements.releaseActualTotals.title = presentation.entryRule;
         }
 
         function renderReleaseDashboard() {
@@ -3496,6 +4223,8 @@
                 );
                 elements.releaseWorkPackages.append(row);
             });
+
+            renderActualWorkLog(releasePlan, locale);
 
             clear(elements.releaseGates);
             releasePlan.gates.forEach(gate => {
@@ -3796,8 +4525,17 @@
                 })
                 : null;
 
-            const agendaGrid = createElement('div', { className: 'agenda' });
-            agenda.days.forEach(day => {
+            const agendaGrid = createElement('div', {
+                className: agenda.placementMode === 'abstract_weekly_capacity'
+                    ? 'agenda agenda--abstract'
+                    : 'agenda'
+            });
+            if (agenda.placementMode === 'abstract_weekly_capacity') {
+                agendaGrid.append(createElement('p', {
+                    text: 'Nessuna fascia oraria futura. Le ore della settimana sono capacità agentica equivalente per il forecast macro; gli intervalli reali compaiono soltanto nel consuntivo attestato.'
+                }));
+            }
+            if (agenda.placementMode !== 'abstract_weekly_capacity') agenda.days.forEach(day => {
                 const dayCard = createElement('article', { className: 'agenda-day' }, [
                     createElement('h3', { text: formatDayName(day.date, locale) })
                 ]);

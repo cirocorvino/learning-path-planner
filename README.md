@@ -138,7 +138,7 @@ docs/                      gestione database, interfaccia, formato dati, archite
 
 ## Formati e privacy
 
-I formati v2 e v3 per la governance di rilascio sono documentati in [docs/JSON-DATABASE.md](docs/JSON-DATABASE.md). Un piano importabile è disponibile in [data/study-program-example.json](data/study-program-example.json).
+I formati database v2/v3 e i release plan v1-v5, incluso il consuntivo attestato, sono documentati in [docs/JSON-DATABASE.md](docs/JSON-DATABASE.md). Un piano importabile è disponibile in [data/study-program-example.json](data/study-program-example.json).
 
 `data/user/` e `data/private/` sono esclusi da Git salvo i rispettivi README. Prima di rendere pubblico un repository che in passato ha contenuto dati personali, cancellare i file dal ramo corrente **non basta**: occorre pubblicare da una cronologia nuova o riscrivere e sostituire l'intera cronologia. La procedura è in [docs/PRIVACY.md](docs/PRIVACY.md).
 

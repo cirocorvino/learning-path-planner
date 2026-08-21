@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
     DATABASE_KIND,
     PLAN_KIND,
+    calculateActualWorkMetrics,
     calculateReleaseScopeMetrics,
     calculateReleaseScopeProgress,
     createEmptyDatabase,
@@ -370,6 +371,121 @@ function absoluteReleaseDatabase() {
     return database;
 }
 
+function actualWorkReleaseDatabase() {
+    const database = absoluteReleaseDatabase();
+    const releasePlan = database.releasePlan;
+    releasePlan.schemaVersion = 5;
+    Object.assign(releasePlan.capacity, {
+        scheduleMode: 'abstract_weekly_capacity',
+        effortUnit: 'agentic_equivalent_minutes'
+    });
+    releasePlan.actualWorkLog = {
+        version: 'attested-actuals-v1',
+        entryRule: 'Registrare soltanto timestamp o durate attestati.',
+        coverageNote: 'Copertura delle task Codex disponibili, non timesheet umano esaustivo.',
+        semantics: {
+            agenticEffort: 'Stima separata e mai derivata dal wall-clock.',
+            humanLeadTime: 'Attesa di calendario separata.',
+            observedClock: 'Intervallo reale attestato della task.'
+        },
+        sources: [{
+            id: 'handoff-one',
+            type: 'tech-lead-handoff',
+            reference: 'Thread Tech Lead',
+            summary: 'Timestamp attestati.',
+            observedAt: '2026-08-21'
+        }],
+        outputEvidence: [{
+            id: 'pr-197-open',
+            type: 'pull-request',
+            reference: '#197',
+            status: 'draft',
+            publishedAt: '2026-08-20T23:34:52+02:00',
+            finalizedAt: '',
+            summary: 'Draft PR aperta.'
+        }],
+        entries: [
+            {
+                id: 'actual-a',
+                date: '2026-08-20',
+                roleTask: 'Coder #197',
+                topicId: 'goals',
+                topicLabel: 'Prompt assessment',
+                workPackageIds: ['wp-one'],
+                description: 'Implementazione iniziale.',
+                status: 'complete',
+                references: [{ kind: 'pr', reference: '#197' }],
+                timing: {
+                    kind: 'clock_interval',
+                    startAt: '2026-08-20T22:50:39+02:00',
+                    endAt: '2026-08-20T23:36:05+02:00',
+                    timeZone: 'Europe/Rome',
+                    actualClockElapsedSeconds: 2726
+                },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff-one',
+                outputEvidenceIds: ['pr-197-open']
+            },
+            {
+                id: 'actual-b',
+                date: '2026-08-20',
+                roleTask: 'Coder #198',
+                topicId: '',
+                topicLabel: 'Prompt LPD',
+                workPackageIds: [],
+                description: 'Intervallo sovrapposto oltre mezzanotte.',
+                status: 'complete',
+                references: [{ kind: 'pr', reference: '#198' }],
+                timing: {
+                    kind: 'clock_interval',
+                    startAt: '2026-08-20T22:51:03+02:00',
+                    endAt: '2026-08-21T00:11:29+02:00',
+                    timeZone: 'Europe/Rome',
+                    actualClockElapsedSeconds: 4826
+                },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff-one',
+                outputEvidenceIds: []
+            },
+            {
+                id: 'actual-unplaced',
+                date: '2026-08-21',
+                roleTask: 'Task attestata',
+                topicId: '',
+                topicLabel: 'Attività non collocata',
+                workPackageIds: [],
+                description: 'Durata senza fascia oraria.',
+                status: 'complete',
+                references: [{ kind: 'task', reference: 'task-1' }],
+                timing: { kind: 'unplaced_duration', attestedDurationSeconds: 600 },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff-one',
+                outputEvidenceIds: []
+            },
+            {
+                id: 'actual-open',
+                date: '2026-08-21',
+                roleTask: 'Release Plan Expert',
+                topicId: '',
+                topicLabel: 'Registro orario',
+                workPackageIds: [],
+                description: 'Attività ancora aperta.',
+                status: 'in_progress',
+                references: [{ kind: 'task', reference: 'release-plan-task' }],
+                timing: {
+                    kind: 'open_interval',
+                    startAt: '2026-08-21T17:06:48+02:00',
+                    timeZone: 'Europe/Rome'
+                },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff-one',
+                outputEvidenceIds: []
+            }
+        ]
+    };
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -499,6 +615,55 @@ test('mantiene stabile il round-trip del release plan v4', () => {
     const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
 
     assert.deepEqual(second, first);
+});
+
+test('normalizza il registro v5 e separa somma task, unione giornaliera ed effort agentico', () => {
+    const normalized = normalizeDatabase(actualWorkReleaseDatabase()).database;
+    const metrics = calculateActualWorkMetrics(normalized.releasePlan);
+
+    assert.equal(normalized.releasePlan.schemaVersion, 5);
+    assert.equal(normalized.releasePlan.capacity.scheduleMode, 'abstract_weekly_capacity');
+    assert.equal(metrics.entryCount, 4);
+    assert.equal(metrics.closedEntryCount, 3);
+    assert.equal(metrics.openEntryCount, 1);
+    assert.equal(metrics.actualClockElapsedSeconds, 7552);
+    assert.equal(metrics.attestedUnplacedSeconds, 600);
+    assert.equal(metrics.taskElapsedSeconds, 8152);
+    assert.equal(metrics.dailyUnionElapsedSeconds, 4850);
+    assert.equal(metrics.agentEffortEquivalentMinutes, null);
+    assert.deepEqual(metrics.daily.map(day => [day.date, day.taskElapsedSeconds, day.dailyUnionElapsedSeconds]), [
+        ['2026-08-20', 6863, 4161],
+        ['2026-08-21', 1289, 689]
+    ]);
+});
+
+test('mantiene stabile il round-trip del release plan v5', () => {
+    const first = normalizeDatabase(actualWorkReleaseDatabase()).database;
+    const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
+
+    assert.deepEqual(second, first);
+});
+
+test('rifiuta durate, fonti e intervalli aperti inventati nel registro v5', () => {
+    const wrongDuration = actualWorkReleaseDatabase();
+    wrongDuration.releasePlan.actualWorkLog.entries[0].timing.actualClockElapsedSeconds = 1;
+    assert.throws(() => normalizeDatabase(wrongDuration), /diverge dall'intervallo/i);
+
+    const unplacedWithClock = actualWorkReleaseDatabase();
+    unplacedWithClock.releasePlan.actualWorkLog.entries[2].timing.startAt = '2026-08-21T10:00:00+02:00';
+    assert.throws(() => normalizeDatabase(unplacedWithClock), /durata non collocata/i);
+
+    const closedOpenInterval = actualWorkReleaseDatabase();
+    closedOpenInterval.releasePlan.actualWorkLog.entries[3].timing.endAt = '2026-08-21T18:00:00+02:00';
+    assert.throws(() => normalizeDatabase(closedOpenInterval), /ancora aperto/i);
+
+    const unknownSource = actualWorkReleaseDatabase();
+    unknownSource.releasePlan.actualWorkLog.entries[0].timestampSourceId = 'invented';
+    assert.throws(() => normalizeDatabase(unknownSource), /fonte sconosciuta/i);
+
+    const reversedOutput = actualWorkReleaseDatabase();
+    reversedOutput.releasePlan.actualWorkLog.outputEvidence[0].finalizedAt = '2026-08-20T20:00:00+02:00';
+    assert.throws(() => normalizeDatabase(reversedOutput), /precede publishedAt/i);
 });
 
 test('rifiuta vettori per-scope nel modello v4', () => {

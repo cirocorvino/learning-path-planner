@@ -132,7 +132,7 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
   },
   "state": { "progress": {} },
   "releasePlan": {
-    "schemaVersion": 4,
+    "schemaVersion": 5,
     "sourceSnapshot": {},
     "methodology": {},
     "metricSemantics": {},
@@ -141,7 +141,19 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
       "visionScopeId": "known-vision",
       "scopeOrder": ["pilot-v1", "public-mvp-v1", "known-vision"]
     },
-    "capacity": {},
+    "capacity": {
+      "scheduleMode": "abstract_weekly_capacity",
+      "effortUnit": "agentic_equivalent_minutes"
+    },
+    "actualWorkLog": {
+      "version": "attested-actuals-v1",
+      "entryRule": "Solo dati attestati.",
+      "coverageNote": "Copertura delle task disponibili, non timesheet umano esaustivo.",
+      "semantics": {},
+      "sources": [],
+      "outputEvidence": [],
+      "entries": []
+    },
     "scopes": [],
     "releaseStatus": {},
     "deliveryModel": {},
@@ -159,7 +171,7 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
 }
 ```
 
-I formati `releasePlan` v1, v2 e v3 restano leggibili. La v2 aggiunge riepilogo, baseline e coefficienti adattivi; la v3 aggiunge la semantica esplicita delle metriche. La v4 introduce un solo `functionalWeight` per WP, membership esplicita tramite `scope.workPackageIds` e `reportedBreadthPercent`.
+I formati `releasePlan` v1-v4 restano leggibili. La v2 aggiunge riepilogo, baseline e coefficienti adattivi; la v3 aggiunge la semantica esplicita delle metriche. La v4 introduce un solo `functionalWeight` per WP, membership esplicita tramite `scope.workPackageIds` e `reportedBreadthPercent`. La v5 separa capacità agentica astratta, lead time e consuntivo reale attestato.
 
 Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze ed eventuali topic del piano. Nella v4 aggiunge un solo `functionalWeight` con la relativa origine; le versioni precedenti conservano i pesi storici per-scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
 
@@ -176,6 +188,16 @@ La readiness non deriva dal completamento o dall'ampiezza. Gli stati ammessi son
 Gli scope devono versionare il denominatore e indicare la fonte canonica. `changeHistory` registra le variazioni del piano; `scopeChanges` registra le modifiche di perimetro che rendono percentuali di versioni diverse non direttamente confrontabili. Gate, milestone, forecast e percorso critico sono validati rispetto agli ID dichiarati.
 
 `capacity` distingue capacità lorda, quota pianificata e riserva. Quando deriva da limiti agentici o da altri proxy, `basis`, `officialLimitEvidence`, `empiricalBaseline` e `calibrationWindowWeeks` rendono esplicita l'assunzione e la successiva verifica. Il coefficiente non deve duplicare la riserva: il primo copre il normale costo del delivery previsto per una classe di intervento, la seconda resta capacità non allocata per variabilità e imprevisti.
+
+Nella v5 `scheduleMode: abstract_weekly_capacity` usa `plannedWeeklyMinutes` per il Gantt macro senza creare slot di orologio; richiede `effortUnit: agentic_equivalent_minutes`. `clock_slots` e `clock_minutes` mantengono invece il comportamento basato sulla settimana tipo. Eccezioni, impegni personali e slot generici non riducono automaticamente una capacità agentica astratta.
+
+`actualWorkLog` è indipendente da percentuali e forecast. Ogni voce dichiara ruolo/task, topic descrittivo, eventuali WP, riferimenti task/issue/PR, stato, fonte del timestamp ed evidenze output separate. I timing ammessi sono:
+
+- `clock_interval`: `startAt`, `endAt`, `timeZone` e `actualClockElapsedSeconds`, verificati fra loro;
+- `unplaced_duration`: sola `attestedDurationSeconds`, senza inventare orari;
+- `open_interval`: solo `startAt` e `timeZone`, senza durata o fine finché l'attività resta aperta.
+
+`agentEffortEquivalentMinutes` è nullable e non viene ricavato dal wall-clock. La vista calcola sia la somma dei record per task sia `dailyUnionElapsed`, che unisce gli intervalli sovrapposti della giornata. Gli eventi in `outputEvidence` documentano pubblicazione, commit o merge, ma non sostituiscono mai l'intervallo di lavoro.
 
 ## Piano importabile
 

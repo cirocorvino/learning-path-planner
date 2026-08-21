@@ -4,7 +4,7 @@ Learning Path Planner è una single-page application statica, senza framework e 
 
 ## Componenti
 
-- `model.js` definisce invarianti, normalizza ogni input, migra il formato organizer v1 al formato v2 e valida l'estensione v3 per la governance di rilascio.
+- `model.js` definisce invarianti, normalizza ogni input, migra il formato organizer v1 al formato v2 e valida l'estensione v3 con release plan v1-v5.
 - `db-configuration.js` valida la configurazione, limita i percorsi alla root del progetto e costruisce l'URL del database predefinito.
 - `local-database.js` gestisce l'involucro versionato e le transazioni IndexedDB usate esclusivamente da `file://`.
 - `planner.js` è un motore puro: calcola capacità, date del Gantt, allocazioni degli argomenti e agenda della settimana.
@@ -61,7 +61,8 @@ Ogni modifica attraversa nuovamente la normalizzazione. Il planner non muta il d
 
 - **Local-first:** nessun backend, account o servizio esterno e nessun accesso diretto in scrittura al filesystem; in `file://` il database operativo è persistito in IndexedDB, mai in `localStorage`.
 - **Modello esplicito:** i tipi degli argomenti e i ruoli delle categorie sostituiscono inferenze basate sui nomi.
-- **Piano sequenziale:** un modulo inizia dopo la fine del precedente; le eccezioni possono estendere la durata.
+- **Piano sequenziale:** un modulo inizia dopo la fine del precedente; gli organizer usano gli slot, mentre un release plan v5 può usare una capacità settimanale astratta senza fasce orarie.
+- **Consuntivo attestato:** elapsed per task, unione giornaliera, lead time ed effort agentico restano misure diverse; gli eventi GitHub sono evidenze di output, non durate.
 - **Date senza orario:** i calcoli usano date ISO in UTC per evitare scarti dovuti all'ora legale.
 - **Distribuzione statica:** il bundle classico versionato non richiede build per l'utilizzatore e non incorpora la DEMO; `npm run build` serve dopo una modifica ai moduli sorgente.
 

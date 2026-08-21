@@ -26,6 +26,7 @@ const modules = [
             'createEmptyWeekTemplate',
             'createEmptyDatabase',
             'databaseHasContent',
+            'calculateActualWorkMetrics',
             'calculateReleaseScopeMetrics',
             'calculateReleaseScopeProgress',
             'releaseScopeInversionContributors',
@@ -67,10 +68,11 @@ const modules = [
         name: 'releasePresentationApi',
         file: 'js/release-presentation.js',
         prelude: [
-            'const { releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;',
+            'const { calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;',
             'const { formatDate, formatDuration } = plannerApi;'
         ].join('\n'),
         exports: [
+            'buildActualWorkLogPresentation',
             'buildAllocationClassNames',
             'buildAllocationReleasePresentation',
             'buildModuleWorkPackagePresentation'
@@ -127,7 +129,7 @@ const modules = [
         prelude: [
             'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
-            'const { buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;',
+            'const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'
         ].join('\n'),

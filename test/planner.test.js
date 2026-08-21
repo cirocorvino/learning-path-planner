@@ -100,3 +100,31 @@ test("distribuisce l'agenda soltanto negli slot focus disponibili", () => {
     assert.equal(assignedMinutes, 180);
     assert.equal(agenda.days.flatMap(day => day.sessions).filter(session => !session.isFocus).flatMap(session => session.assignments).length, 0);
 });
+
+test('usa capacità release astratta senza convertire slot, eccezioni o impegni in orari agentici', () => {
+    const value = database();
+    value.releasePlan = {
+        capacity: {
+            scheduleMode: 'abstract_weekly_capacity',
+            plannedWeeklyMinutes: 1800
+        }
+    };
+    value.plan.weeklyTargetMinutes = 1800;
+    value.settings.calendarExceptions = [{
+        id: 'holiday',
+        date: '2026-08-04',
+        label: 'Impegno personale',
+        focusAvailable: false
+    }];
+
+    const schedule = buildPlanSchedule(value);
+    const agenda = getWeekAgenda(value, 'foundations', 0);
+
+    assert.equal(getWeeklyCapacity(value), 1800);
+    assert.equal(schedule.baseCapacityMinutes, 1800);
+    assert.equal(schedule.warnings.length, 0);
+    assert.equal(agenda.placementMode, 'abstract_weekly_capacity');
+    assert.equal(agenda.availableMinutes, 1800);
+    assert.equal(agenda.days.flatMap(day => day.sessions).length, 0);
+    assert.ok(agenda.allocations.length > 0);
+});
