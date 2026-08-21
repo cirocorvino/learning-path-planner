@@ -14,6 +14,7 @@
         const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
         const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
         const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
+        const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
         const DELIVERY_DEPENDENCY_TYPES = [
             'required_before_start',
             'overlap_after_design',
@@ -691,6 +692,96 @@
             };
         }
 
+        function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds) {
+            const source = requireObject(input, path);
+            const mappedEntryIds = new Set();
+            const activities = requireArray(source.activities, `${path}.activities`).map((activity, index) => {
+                const itemPath = `${path}.activities[${index}]`;
+                requireObject(activity, itemPath);
+                const kind = requiredString(activity.kind, `${itemPath}.kind`, 40);
+                if (!SCHEDULE_RECONCILIATION_KINDS.includes(kind)) {
+                    throw new Error(`${itemPath}.kind non è supportato.`);
+                }
+                const startDate = validDate(activity.startDate, `${itemPath}.startDate`);
+                const endDate = validDate(activity.endDate, `${itemPath}.endDate`);
+                if (Date.parse(`${endDate}T00:00:00Z`) < Date.parse(`${startDate}T00:00:00Z`)) {
+                    throw new Error(`${itemPath}.endDate precede startDate.`);
+                }
+                const sourceModuleIds = normalizeStringList(
+                    activity.sourceModuleIds,
+                    `${itemPath}.sourceModuleIds`,
+                    120
+                ).map((moduleId, moduleIndex) => validId(
+                    moduleId,
+                    `${itemPath}.sourceModuleIds[${moduleIndex}]`
+                ));
+                sourceModuleIds.forEach(moduleId => {
+                    if (!moduleIds.has(moduleId)) {
+                        throw new Error(`${itemPath}.sourceModuleIds contiene il modulo sconosciuto ${moduleId}.`);
+                    }
+                });
+                const sourceTopicIds = normalizeStringList(
+                    activity.sourceTopicIds,
+                    `${itemPath}.sourceTopicIds`,
+                    120
+                ).map((topicId, topicIndex) => validId(
+                    topicId,
+                    `${itemPath}.sourceTopicIds[${topicIndex}]`
+                ));
+                sourceTopicIds.forEach(topicId => {
+                    if (!topicIds.has(topicId)) {
+                        throw new Error(`${itemPath}.sourceTopicIds contiene l'argomento sconosciuto ${topicId}.`);
+                    }
+                });
+                const entryIds = normalizeStringList(activity.entryIds, `${itemPath}.entryIds`, 120)
+                    .map((entryId, entryIndex) => validId(entryId, `${itemPath}.entryIds[${entryIndex}]`));
+                if (entryIds.length === 0) {
+                    throw new Error(`${itemPath}.entryIds non può essere vuoto.`);
+                }
+                entryIds.forEach(entryId => {
+                    if (!actualEntryIds.has(entryId)) {
+                        throw new Error(`${itemPath}.entryIds contiene l'attività attestata sconosciuta ${entryId}.`);
+                    }
+                    if (mappedEntryIds.has(entryId)) {
+                        throw new Error(`${itemPath}.entryIds assegna più volte l'attività attestata ${entryId}.`);
+                    }
+                    mappedEntryIds.add(entryId);
+                });
+                return {
+                    id: validId(activity.id, `${itemPath}.id`),
+                    title: requiredString(activity.title, `${itemPath}.title`, 300),
+                    kind,
+                    color: validColor(activity.color, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
+                    status: validStatus(activity.status, `${itemPath}.status`),
+                    startDate,
+                    endDate,
+                    sourceModuleIds,
+                    sourceTopicIds,
+                    entryIds,
+                    baselinePlannedMinutes: finitePositive(
+                        activity.baselinePlannedMinutes,
+                        `${itemPath}.baselinePlannedMinutes`,
+                        { integer: true, allowNull: true }
+                    ),
+                    summary: requiredString(activity.summary, `${itemPath}.summary`, 1200),
+                    planImpact: requiredString(activity.planImpact, `${itemPath}.planImpact`, 1500)
+                };
+            });
+            uniqueIds(activities, `${path}.activities`);
+            if (source.requireCompleteMapping === true && mappedEntryIds.size !== actualEntryIds.size) {
+                const unmapped = [...actualEntryIds].filter(entryId => !mappedEntryIds.has(entryId));
+                throw new Error(`${path}.activities non classifica tutte le attività attestate: ${unmapped.join(', ')}.`);
+            }
+            return {
+                version: requiredString(source.version, `${path}.version`, 120),
+                asOf: validDate(source.asOf, `${path}.asOf`),
+                requireCompleteMapping: source.requireCompleteMapping === true,
+                rule: requiredString(source.rule, `${path}.rule`, 1500),
+                forecastRule: requiredString(source.forecastRule, `${path}.forecastRule`, 1500),
+                activities
+            };
+        }
+
         function normalizeExternalLeadTimes(input, path) {
             return (Array.isArray(input) ? input : []).map((leadTime, index) => {
                 const itemPath = `${path}[${index}]`;
@@ -1065,10 +1156,8 @@
             return currentStart === null ? 0 : total + currentEnd - currentStart;
         }
 
-        function calculateActualWorkMetrics(releasePlan) {
-            const entries = Array.isArray(releasePlan?.actualWorkLog?.entries)
-                ? releasePlan.actualWorkLog.entries
-                : [];
+        function calculateActualEntriesMetrics(entriesInput) {
+            const entries = Array.isArray(entriesInput) ? entriesInput : [];
             const days = new Map();
             const referenceTotals = new Map();
             const workPackageTotals = new Map();
@@ -1082,6 +1171,7 @@
                     days.set(date, {
                         date,
                         entries: [],
+                        entryElapsedSeconds: new Map(),
                         clockIntervals: [],
                         taskElapsedSeconds: 0,
                         unplacedElapsedSeconds: 0,
@@ -1089,6 +1179,14 @@
                     });
                 }
                 return days.get(date);
+            }
+
+            function addDayEntry(day, entry, elapsedSeconds) {
+                day.entryElapsedSeconds.set(
+                    entry.id,
+                    (day.entryElapsedSeconds.get(entry.id) || 0) + elapsedSeconds
+                );
+                if (!day.entries.includes(entry)) day.entries.push(entry);
             }
 
             function addGroupedTotal(map, key, data, elapsedSeconds, entryId) {
@@ -1131,18 +1229,18 @@
                         const day = dayFor(segment.date);
                         day.clockIntervals.push(segment);
                         day.taskElapsedSeconds += segment.elapsedSeconds;
-                        if (!day.entries.includes(entry)) day.entries.push(entry);
+                        addDayEntry(day, entry, segment.elapsedSeconds);
                     });
                 } else if (timing.kind === 'unplaced_duration') {
                     attestedUnplacedSeconds += elapsedSeconds;
                     const day = dayFor(entry.date);
                     day.taskElapsedSeconds += elapsedSeconds;
                     day.unplacedElapsedSeconds += elapsedSeconds;
-                    day.entries.push(entry);
+                    addDayEntry(day, entry, elapsedSeconds);
                 } else {
                     const day = dayFor(entry.date);
                     day.openEntryCount += 1;
-                    day.entries.push(entry);
+                    addDayEntry(day, entry, 0);
                 }
             });
 
@@ -1155,6 +1253,7 @@
                         const rightStart = right.timing.startAt || `${right.date}T23:59:59Z`;
                         return leftStart.localeCompare(rightStart);
                     }),
+                    entryElapsedSeconds: Object.fromEntries(day.entryElapsedSeconds),
                     taskElapsedSeconds: day.taskElapsedSeconds,
                     dailyUnionElapsedSeconds: mergedIntervalSeconds(day.clockIntervals),
                     unplacedElapsedSeconds: day.unplacedElapsedSeconds,
@@ -1175,6 +1274,10 @@
                 referenceTotals: [...referenceTotals.values()],
                 workPackageTotals: [...workPackageTotals.values()]
             };
+        }
+
+        function calculateActualWorkMetrics(releasePlan) {
+            return calculateActualEntriesMetrics(releasePlan?.actualWorkLog?.entries);
         }
 
         function calculateReleaseScopeMetrics(releasePlan, scopeId) {
@@ -1308,7 +1411,7 @@
             };
         }
 
-        function normalizeReleasePlan(input, topicIds) {
+        function normalizeReleasePlan(input, topicIds, moduleIds) {
             const source = requireObject(input, 'releasePlan');
             const releasePlanSchemaVersion = Number(source.schemaVersion);
             if (!SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS.includes(releasePlanSchemaVersion)) {
@@ -1427,6 +1530,7 @@
                 ? normalizeAbsoluteWeightModel(source.absoluteWeightModel, 'releasePlan.absoluteWeightModel')
                 : null;
             let actualWorkLog = null;
+            let scheduleReconciliation = null;
 
             const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
                 const path = `releasePlan.scopes[${index}]`;
@@ -1597,6 +1701,15 @@
                     topicIds,
                     workPackageIds
                 );
+                if (source.scheduleReconciliation) {
+                    scheduleReconciliation = normalizeScheduleReconciliation(
+                        source.scheduleReconciliation,
+                        'releasePlan.scheduleReconciliation',
+                        moduleIds,
+                        topicIds,
+                        new Set(actualWorkLog.entries.map(entry => entry.id))
+                    );
+                }
             }
 
             if (hasAbsoluteFunctionalWeights) {
@@ -1902,6 +2015,7 @@
                 ...(hasMetricSemantics ? { metricSemantics } : {}),
                 ...(hasAbsoluteFunctionalWeights ? { absoluteWeightModel } : {}),
                 ...(hasAttestedActualWork ? { actualWorkLog } : {}),
+                ...(scheduleReconciliation ? { scheduleReconciliation } : {}),
                 ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
                 workPackages,
                 gates,
@@ -1959,7 +2073,11 @@
                 }
             };
             if (source.releasePlan) {
-                normalized.releasePlan = normalizeReleasePlan(source.releasePlan, topicIds);
+                normalized.releasePlan = normalizeReleasePlan(
+                    source.releasePlan,
+                    topicIds,
+                    new Set(plan.modules.map(module => module.id))
+                );
             }
             return normalized;
         }
@@ -2181,11 +2299,11 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateActualWorkMetrics, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateActualEntriesMetrics, calculateActualWorkMetrics, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
-        const { DAY_KEYS, TOPIC_KINDS } = modelApi;
+        const { DAY_KEYS, TOPIC_KINDS, calculateActualEntriesMetrics, calculateActualWorkMetrics } = modelApi;
 
         const DAY_BY_UTC_INDEX = [
             'sunday',
@@ -2304,6 +2422,24 @@
             );
         }
 
+        function remainingTopicMinutes(topic, multipliers = {}, progress = {}) {
+            const effectiveMinutes = effectiveTopicMinutes(topic, multipliers);
+            const topicProgress = progress?.[topic.id];
+            if (topicProgress?.completed === true) return 0;
+            const multiplier = Number(multipliers[topic.kind]) || 1;
+            const completedMinutes = Math.max(0, Math.round(Number(topicProgress?.completedMinutes) || 0));
+            const effectiveCompletedMinutes = Math.round(completedMinutes * multiplier);
+            return Math.max(0, effectiveMinutes - effectiveCompletedMinutes);
+        }
+
+        function moduleRemainingMinutes(module, multipliers = {}, progress = {}) {
+            if (module.mode === 'buffer') return 0;
+            return module.topics.reduce(
+                (total, topic) => total + remainingTopicMinutes(topic, multipliers, progress),
+                0
+            );
+        }
+
         function getWeeklyCapacity(database) {
             const abstractCapacity = abstractReleaseCapacity(database);
             if (abstractCapacity !== null) return abstractCapacity;
@@ -2395,6 +2531,68 @@
             return capacities;
         }
 
+        function getActualWorkWeeks(database) {
+            const daily = calculateActualWorkMetrics(database.releasePlan).daily;
+            if (daily.length === 0) return [];
+            const planStart = parseIsoDate(database.plan.startDate);
+            const weeks = new Map();
+
+            daily.forEach(day => {
+                const dayOffset = daysBetween(database.plan.startDate, day.date);
+                const weekOffset = Math.floor(dayOffset / 7) * 7;
+                const weekStart = addDays(planStart, weekOffset);
+                const weekStartDate = toIsoDate(weekStart);
+                if (!weeks.has(weekStartDate)) {
+                    weeks.set(weekStartDate, {
+                        id: `actual-week-${weekStartDate}`,
+                        startDate: weekStartDate,
+                        endDate: toIsoDate(addDays(weekStart, 6)),
+                        taskElapsedSeconds: 0,
+                        dailyUnionElapsedSeconds: 0,
+                        unplacedElapsedSeconds: 0,
+                        openEntryCount: 0,
+                        dayCount: 0
+                    });
+                }
+                const week = weeks.get(weekStartDate);
+                week.taskElapsedSeconds += day.taskElapsedSeconds;
+                week.dailyUnionElapsedSeconds += day.dailyUnionElapsedSeconds;
+                week.unplacedElapsedSeconds += day.unplacedElapsedSeconds;
+                week.openEntryCount += day.openEntryCount;
+                week.dayCount += 1;
+            });
+
+            return [...weeks.values()].sort((left, right) => left.startDate.localeCompare(right.startDate));
+        }
+
+        function getReconciledActualActivities(database) {
+            const reconciliation = database.releasePlan?.scheduleReconciliation;
+            const entries = database.releasePlan?.actualWorkLog?.entries || [];
+            if (!reconciliation) return [];
+            const entryById = new Map(entries.map(entry => [entry.id, entry]));
+            return reconciliation.activities.map(activity => {
+                const activityEntries = activity.entryIds
+                    .map(entryId => entryById.get(entryId))
+                    .filter(Boolean);
+                const metrics = calculateActualEntriesMetrics(activityEntries);
+                return {
+                    ...activity,
+                    entryCount: metrics.entryCount,
+                    closedEntryCount: metrics.closedEntryCount,
+                    openEntryCount: metrics.openEntryCount,
+                    taskElapsedSeconds: metrics.taskElapsedSeconds,
+                    dailyUnionElapsedSeconds: metrics.dailyUnionElapsedSeconds,
+                    unplacedElapsedSeconds: metrics.attestedUnplacedSeconds
+                };
+            });
+        }
+
+        function getForecastStartDate(database) {
+            const actualWeeks = getActualWorkWeeks(database);
+            if (actualWeeks.length === 0) return database.plan.startDate;
+            return toIsoDate(addDays(parseIsoDate(actualWeeks.at(-1).startDate), 7));
+        }
+
         function buildPlanSchedule(database) {
             const baseCapacityMinutes = getWeeklyCapacity(database);
             const requestedTargetMinutes = database.plan.weeklyTargetMinutes ?? baseCapacityMinutes;
@@ -2409,9 +2607,24 @@
                 );
             }
 
-            let cursor = parseIsoDate(database.plan.startDate);
+            const actualWeeks = getActualWorkWeeks(database);
+            const actualActivities = getReconciledActualActivities(database);
+            const forecastStartDate = actualWeeks.length
+                ? toIsoDate(addDays(parseIsoDate(actualWeeks.at(-1).startDate), 7))
+                : database.plan.startDate;
+            let cursor = parseIsoDate(forecastStartDate);
             const modules = database.plan.modules.map(module => {
-                const totalMinutes = moduleEffectiveMinutes(module, database.settings.estimationMultipliers);
+                const originalTotalMinutes = moduleEffectiveMinutes(module, database.settings.estimationMultipliers);
+                const totalMinutes = moduleRemainingMinutes(
+                    module,
+                    database.settings.estimationMultipliers,
+                    database.state.progress
+                );
+                const remainingTopicCount = module.topics.filter(topic => remainingTopicMinutes(
+                    topic,
+                    database.settings.estimationMultipliers,
+                    database.state.progress
+                ) > 0).length;
                 const start = new Date(cursor.getTime());
                 const weekCapacities = module.mode === 'buffer'
                     ? Array.from({ length: module.fixedWeeks }, () => 0)
@@ -2426,7 +2639,11 @@
 
                 return {
                     ...module,
+                    originalTotalMinutes,
+                    completedMinutes: originalTotalMinutes - totalMinutes,
                     totalMinutes,
+                    remainingTopicCount,
+                    completedTopicCount: module.topics.length - remainingTopicCount,
                     weeks,
                     startDate: toIsoDate(start),
                     endDate: toIsoDate(end),
@@ -2447,7 +2664,10 @@
                 requestedTargetMinutes,
                 effectiveWeeklyTargetMinutes: Math.min(requestedTargetMinutes, baseCapacityMinutes),
                 startDate: database.plan.startDate,
+                forecastStartDate,
                 endDate: lastScheduled?.endDate || database.plan.startDate,
+                actualWeeks,
+                actualActivities,
                 warnings: [...new Set(warnings)]
             };
         }
@@ -2467,7 +2687,11 @@
             const allocations = [];
 
             sourceModule.topics.forEach(topic => {
-                const topicMinutes = effectiveTopicMinutes(topic, database.settings.estimationMultipliers);
+                const topicMinutes = remainingTopicMinutes(
+                    topic,
+                    database.settings.estimationMultipliers,
+                    database.state.progress
+                );
                 const topicEnd = topicStart + topicMinutes;
                 const overlapStart = Math.max(topicStart, startOffset);
                 const overlapEnd = Math.min(topicEnd, endOffset);
@@ -2570,12 +2794,12 @@
             }).format(date);
         }
 
-        return { parseIsoDate, toIsoDate, addDays, daysBetween, getTimelineMonths, minutesBetween, effectiveTopicMinutes, moduleEffectiveMinutes, getWeeklyCapacity, getWeekTemplateForStart, getWeekCapacity, buildPlanSchedule, getModuleWeekAllocations, getWeekAgenda, formatDuration, formatDate, formatDayName };
+        return { parseIsoDate, toIsoDate, addDays, daysBetween, getTimelineMonths, minutesBetween, effectiveTopicMinutes, moduleEffectiveMinutes, remainingTopicMinutes, moduleRemainingMinutes, getWeeklyCapacity, getWeekTemplateForStart, getWeekCapacity, buildPlanSchedule, getActualWorkWeeks, getReconciledActualActivities, getForecastStartDate, getModuleWeekAllocations, getWeekAgenda, formatDuration, formatDate, formatDayName };
     })();
 
     const releasePresentationApi = (() => {
-        const { calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
-        const { formatDate, formatDuration } = plannerApi;
+        const { calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
+        const { formatDate, formatDayName, formatDuration, parseIsoDate } = plannerApi;
 
         function contributorViewModel(workPackage, locale) {
             const snapshotDate = formatDate(workPackage.lastReviewedAt, locale, { year: true });
@@ -2611,6 +2835,15 @@
             }).format(new Date(timestamp));
         }
 
+        function formatClockMinute(timestamp, locale, timeZone) {
+            return new Intl.DateTimeFormat(locale, {
+                hour: '2-digit',
+                minute: '2-digit',
+                hourCycle: 'h23',
+                timeZone
+            }).format(new Date(timestamp));
+        }
+
         function formatOutputTimestamp(timestamp, locale, timeZone) {
             if (!timestamp) return '';
             return new Intl.DateTimeFormat(locale, {
@@ -2625,7 +2858,53 @@
             }).format(new Date(timestamp));
         }
 
-        function actualEntryViewModel(entry, sourceById, outputEvidenceById, workPackageById, locale, outputTimeZone) {
+        function dayTimingText(entry, dayDate, elapsedSeconds, locale) {
+            const timing = entry.timing;
+            if (timing.kind !== 'clock_interval') {
+                return timing.kind === 'unplaced_duration'
+                    ? `Durata attestata non collocata · ${formatElapsedSeconds(elapsedSeconds)}`
+                    : `Dalle ${formatClock(timing.startAt, locale, timing.timeZone)} · in corso`;
+            }
+
+            const startDate = timing.startAt.slice(0, 10);
+            const endDate = timing.endAt.slice(0, 10);
+            const isSplit = startDate !== endDate;
+            const startText = dayDate === startDate
+                ? formatClock(timing.startAt, locale, timing.timeZone)
+                : '00:00:00';
+            const endText = dayDate === endDate
+                ? formatClock(timing.endAt, locale, timing.timeZone)
+                : '24:00:00';
+            return `${startText}–${endText} · ${formatElapsedSeconds(elapsedSeconds)}${isSplit ? ' · quota del giorno' : ''}`;
+        }
+
+        function dayClockText(entry, dayDate, locale) {
+            const timing = entry.timing;
+            if (timing.kind === 'unplaced_duration') return 'Durata non collocata';
+            if (timing.kind === 'open_interval') {
+                return `Dalle ${formatClockMinute(timing.startAt, locale, timing.timeZone)} · in corso`;
+            }
+            const startDate = timing.startAt.slice(0, 10);
+            const endDate = timing.endAt.slice(0, 10);
+            const startText = dayDate === startDate
+                ? formatClockMinute(timing.startAt, locale, timing.timeZone)
+                : '00:00';
+            const endText = dayDate === endDate
+                ? formatClockMinute(timing.endAt, locale, timing.timeZone)
+                : '24:00';
+            return `${startText}–${endText}`;
+        }
+
+        function actualEntryViewModel(
+            entry,
+            sourceById,
+            outputEvidenceById,
+            workPackageById,
+            locale,
+            outputTimeZone,
+            dayDate,
+            dayElapsedSeconds
+        ) {
             const timing = entry.timing;
             let timingText;
             let elapsedSeconds = 0;
@@ -2645,8 +2924,14 @@
                 description: entry.description,
                 status: entry.status,
                 timingKind: timing.kind,
+                timingSortKey: timing.startAt || `${entry.date}T23:59:59Z`,
                 timingText,
                 elapsedSeconds,
+                dayElapsedSeconds,
+                dayElapsedText: formatElapsedSeconds(dayElapsedSeconds),
+                dayTimingText: dayTimingText(entry, dayDate, dayElapsedSeconds, locale),
+                dayClockText: dayClockText(entry, dayDate, locale),
+                references: entry.references.map(reference => ({ ...reference })),
                 referencesText: entry.references.map(reference => `${reference.kind.toUpperCase()} ${reference.reference}`).join(' · '),
                 workPackagesText: entry.workPackageIds
                     .map(workPackageId => workPackageById.get(workPackageId)?.title || workPackageId)
@@ -2714,6 +2999,9 @@
                 days: metrics.daily.map(day => ({
                     date: day.date,
                     dateText: formatDate(day.date, locale, { year: true }),
+                    taskElapsedSeconds: day.taskElapsedSeconds,
+                    dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
+                    unplacedElapsedSeconds: day.unplacedElapsedSeconds,
                     taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
                     dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
                     unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
@@ -2724,7 +3012,9 @@
                         outputEvidenceById,
                         workPackageById,
                         locale,
-                        outputTimeZone
+                        outputTimeZone,
+                        day.date,
+                        day.entryElapsedSeconds[entry.id] || 0
                     ))
                 })),
                 referenceTotals: totals(metrics.referenceTotals),
@@ -2736,6 +3026,185 @@
                     entryId,
                     sourceById.get(entry.timestampSourceId)
                 ]))
+            };
+        }
+
+        function referenceLabel(reference) {
+            const kind = reference.kind === 'pr'
+                ? 'PR'
+                : reference.kind === 'issue'
+                    ? 'Issue'
+                    : reference.kind.toUpperCase();
+            return `${kind} ${reference.reference}`;
+        }
+
+        function uniqueText(values) {
+            return [...new Set(values.filter(Boolean))];
+        }
+
+        const RECONCILIATION_KIND_LABELS = {
+            planned: 'Attività prevista',
+            anticipated: 'Attività futura anticipata',
+            added: 'Attività aggiunta al piano',
+            added_and_anticipated: 'Attività aggiunta e anticipo'
+        };
+
+        function buildReconciliationActivities(releasePlan, locale) {
+            const reconciliation = releasePlan?.scheduleReconciliation;
+            if (!reconciliation) return [];
+            const entryById = new Map(releasePlan.actualWorkLog.entries.map(entry => [entry.id, entry]));
+            return reconciliation.activities.map(activity => {
+                const entries = activity.entryIds.map(entryId => entryById.get(entryId)).filter(Boolean);
+                const metrics = calculateActualEntriesMetrics(entries);
+                const plannedSeconds = activity.baselinePlannedMinutes === null
+                    ? null
+                    : activity.baselinePlannedMinutes * 60;
+                const varianceSeconds = plannedSeconds === null
+                    ? null
+                    : plannedSeconds - metrics.taskElapsedSeconds;
+                let comparisonText = 'Non era presente come blocco autonomo nella baseline.';
+                if (plannedSeconds !== null) {
+                    comparisonText = varianceSeconds >= 0
+                        ? `Stima del blocco ${formatDuration(activity.baselinePlannedMinutes)} · task attestati ${formatElapsedSeconds(metrics.taskElapsedSeconds)} · margine osservato ${formatElapsedSeconds(varianceSeconds)}`
+                        : `Stima del blocco ${formatDuration(activity.baselinePlannedMinutes)} · task attestati ${formatElapsedSeconds(metrics.taskElapsedSeconds)} · scostamento oltre stima ${formatElapsedSeconds(Math.abs(varianceSeconds))}`;
+                }
+                return {
+                    ...activity,
+                    kindLabel: RECONCILIATION_KIND_LABELS[activity.kind] || activity.kind,
+                    taskElapsedSeconds: metrics.taskElapsedSeconds,
+                    taskElapsedText: formatElapsedSeconds(metrics.taskElapsedSeconds),
+                    dailyUnionElapsedSeconds: metrics.dailyUnionElapsedSeconds,
+                    dailyUnionText: formatElapsedSeconds(metrics.dailyUnionElapsedSeconds),
+                    openEntryCount: metrics.openEntryCount,
+                    entryCount: metrics.entryCount,
+                    comparisonText,
+                    periodText: `${formatDate(activity.startDate, locale, { year: true })} — ${formatDate(activity.endDate, locale, { year: true })}`
+                };
+            });
+        }
+
+        function groupWeeklyEntries(entries, activityByEntryId) {
+            const groups = new Map();
+            entries.forEach(entry => {
+                const activity = activityByEntryId.get(entry.id) || null;
+                const deliveryReferences = entry.references.filter(reference => ['issue', 'pr'].includes(reference.kind));
+                const referenceKey = deliveryReferences.length
+                    ? deliveryReferences.map(reference => `${reference.kind}:${reference.reference}`).sort().join('|')
+                    : `task:${entry.roleTask}`;
+                const key = `${activity?.id || 'unclassified'}|${referenceKey}`;
+                if (!groups.has(key)) {
+                    groups.set(key, {
+                        key,
+                        activityId: activity?.id || '',
+                        activityTitle: activity?.title || entry.topicLabel,
+                        activityKindLabel: activity?.kindLabel || 'Attività attestata',
+                        activityColor: activity?.color || '#64748b',
+                        referenceText: deliveryReferences.length
+                            ? deliveryReferences.map(referenceLabel).join(' · ')
+                            : entry.roleTask,
+                        topics: [],
+                        descriptions: [],
+                        roles: [],
+                        workPackages: [],
+                        elapsedSeconds: 0,
+                        openEntryCount: 0,
+                        intervals: [],
+                        firstTimingKey: entry.timingSortKey
+                    });
+                }
+                const group = groups.get(key);
+                group.topics.push(entry.topicLabel);
+                group.descriptions.push(entry.description);
+                group.roles.push(entry.roleTask);
+                group.workPackages.push(entry.workPackagesText);
+                group.elapsedSeconds += entry.dayElapsedSeconds;
+                if (entry.timingKind === 'open_interval') group.openEntryCount += 1;
+                group.intervals.push({
+                    id: entry.id,
+                    roleTask: entry.roleTask,
+                    timingText: entry.dayTimingText,
+                    clockText: entry.dayClockText,
+                    description: entry.description,
+                    status: entry.status
+                });
+            });
+
+            return [...groups.values()].map(group => ({
+                ...group,
+                topicText: uniqueText(group.topics).join(' · '),
+                descriptionText: uniqueText(group.descriptions).join(' '),
+                rolesText: uniqueText(group.roles).join(' · '),
+                workPackagesText: uniqueText(group.workPackages).join(' · '),
+                elapsedText: formatElapsedSeconds(group.elapsedSeconds),
+                timingLines: uniqueText(group.intervals.map(interval => interval.clockText))
+            })).sort((left, right) => left.firstTimingKey.localeCompare(right.firstTimingKey));
+        }
+
+        function buildWeeklyActualWorkPresentation(
+            releasePlan,
+            weekStart,
+            weekEnd,
+            locale = 'it-IT',
+            outputTimeZone = 'Europe/Rome'
+        ) {
+            const actual = buildActualWorkLogPresentation(releasePlan, locale, outputTimeZone);
+            if (!actual) return null;
+
+            const reconciliationActivities = buildReconciliationActivities(releasePlan, locale)
+                .filter(activity => activity.startDate <= weekEnd && activity.endDate >= weekStart);
+            const activityByEntryId = new Map();
+            reconciliationActivities.forEach(activity => {
+                activity.entryIds.forEach(entryId => activityByEntryId.set(entryId, activity));
+            });
+
+            const days = actual.days
+                .filter(day => day.date >= weekStart && day.date <= weekEnd)
+                .map(day => ({
+                    ...day,
+                    dayName: formatDayName(parseIsoDate(day.date), locale),
+                    groups: groupWeeklyEntries(day.entries, activityByEntryId)
+                }));
+            const taskElapsedSeconds = days.reduce(
+                (total, day) => total + day.entries.reduce((dayTotal, entry) => dayTotal + entry.dayElapsedSeconds, 0),
+                0
+            );
+            const dailyUnionElapsedSeconds = days.reduce(
+                (total, day) => total + day.dailyUnionElapsedSeconds,
+                0
+            );
+            const unplacedElapsedSeconds = days.reduce(
+                (total, day) => total + day.unplacedElapsedSeconds,
+                0
+            );
+            const openEntryCount = days.reduce((total, day) => total + day.openEntryCount, 0);
+            const placedTaskElapsedSeconds = Math.max(0, taskElapsedSeconds - unplacedElapsedSeconds);
+            const parallelismFactor = dailyUnionElapsedSeconds > 0
+                ? placedTaskElapsedSeconds / dailyUnionElapsedSeconds
+                : null;
+            const calendarOverlapSeconds = Math.max(0, placedTaskElapsedSeconds - dailyUnionElapsedSeconds);
+
+            return {
+                empty: days.length === 0,
+                displayMode: days.length === 0 ? 'forecast' : 'actual',
+                emptyText: 'Nessuna attività attestata in questa settimana. Le attività future restano nel forecast macro e non diventano appuntamenti inventati.',
+                coverageText: 'Le attività svolte sono ricondotte al piano: previste, anticipate oppure aggiunte. Gli orari provengono dagli intervalli attestati; le sovrapposizioni parallele sono contate una sola volta nel tempo coperto.',
+                activities: reconciliationActivities,
+                summary: {
+                    dailyUnionText: formatElapsedSeconds(dailyUnionElapsedSeconds),
+                    taskElapsedText: formatElapsedSeconds(taskElapsedSeconds),
+                    unplacedText: formatElapsedSeconds(unplacedElapsedSeconds),
+                    parallelismText: parallelismFactor === null
+                        ? 'Non calcolabile'
+                        : `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(parallelismFactor)}×`,
+                    calendarOverlapText: formatElapsedSeconds(calendarOverlapSeconds),
+                    openEntryCount
+                },
+                days,
+                replanning: {
+                    label: 'Effetto sul piano',
+                    text: releasePlan.scheduleReconciliation?.forecastRule
+                        || 'Il lavoro previsto riduce il relativo residuo; quello anticipato viene tolto dalla sua collocazione futura; quello aggiunto consuma calendario e sposta le attività successive. Le percentuali funzionali cambiano soltanto per risultati verificati.'
+                }
             };
         }
 
@@ -2802,7 +3271,7 @@
             };
         }
 
-        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation };
+        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds };
     })();
 
     const configurationApi = (() => {
@@ -3543,7 +4012,7 @@
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
-        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation } = releasePresentationApi;
+        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -3685,6 +4154,8 @@
         let currentSchedule = null;
         let currentDatabaseConfiguration = null;
         let selectedModuleId = null;
+        let selectedActualWeekStart = null;
+        let selectedActualActivityId = null;
         let selectedWeekIndex = 0;
         let settingsDraft = null;
         let planDraft = null;
@@ -4313,6 +4784,41 @@
             }
         }
 
+        function createGanttTrack(months, totalDays) {
+            const track = createElement('div', {
+                className: 'gantt__track',
+                attributes: { role: 'cell' }
+            });
+            months.forEach(month => {
+                const label = createElement('span', {
+                    className: 'gantt__month-label',
+                    text: month.displayLabel,
+                    attributes: { 'aria-hidden': 'true' }
+                });
+                label.style.left = `${month.offsetDays / totalDays * 100}%`;
+                label.style.width = `${month.durationDays / totalDays * 100}%`;
+                track.append(label);
+            });
+            months.slice(1).forEach(month => {
+                const line = createElement('span', {
+                    className: 'gantt__month-line',
+                    attributes: { 'aria-hidden': 'true' }
+                });
+                line.style.left = `${month.offsetDays / totalDays * 100}%`;
+                track.append(line);
+            });
+            return track;
+        }
+
+        function reconciliationKindLabel(kind) {
+            return {
+                planned: 'Attività prevista',
+                anticipated: 'Anticipo di attività futura',
+                added: 'Attività aggiunta',
+                added_and_anticipated: 'Attività aggiunta e anticipo'
+            }[kind] || 'Attività svolta';
+        }
+
         function renderGantt() {
             clear(elements.ganttRows);
             const modules = currentSchedule.modules;
@@ -4324,6 +4830,60 @@
             const totalDays = Math.max(1, daysBetween(currentSchedule.startDate, currentSchedule.endDate) + 1);
             const locale = currentDatabase.metadata.locale;
             const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
+
+            currentSchedule.actualActivities.forEach(activity => {
+                const track = createGanttTrack(months, totalDays);
+                const left = daysBetween(currentSchedule.startDate, activity.startDate) / totalDays * 100;
+                const width = (daysBetween(activity.startDate, activity.endDate) + 1) / totalDays * 100;
+                const bar = createElement('button', {
+                    className: `gantt__bar gantt__bar--actual gantt__bar--${activity.kind}`,
+                    type: 'button',
+                    title: `Apri ${activity.title}`,
+                    attributes: {
+                        'aria-label': `Apri le attività svolte per ${activity.title}`
+                    }
+                });
+                bar.style.left = `${left}%`;
+                bar.style.width = `${Math.max(width, 1.2)}%`;
+                bar.style.background = activity.color;
+                bar.addEventListener('click', () => {
+                    const week = currentSchedule.actualWeeks.find(item => (
+                        activity.startDate >= item.startDate && activity.startDate <= item.endDate
+                    ));
+                    selectedActualWeekStart = week?.startDate || activity.startDate;
+                    selectedActualActivityId = activity.id;
+                    selectedModuleId = null;
+                    renderSelectedWeek();
+                    elements.weekDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
+                track.append(bar);
+
+                const row = createElement('div', {
+                    className: `gantt__row gantt__row--actual gantt__row--${activity.kind}`,
+                    attributes: { role: 'row' }
+                }, [
+                    createElement('div', { attributes: { role: 'cell' } }, [
+                        createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                        createElement('span', {
+                            className: 'gantt__module-meta',
+                            text: `${reconciliationKindLabel(activity.kind)} · ${activity.closedEntryCount} intervalli conclusi${activity.openEntryCount ? ` · ${activity.openEntryCount} in corso` : ''}`
+                        })
+                    ]),
+                    createElement('div', { attributes: { role: 'cell' } }, [
+                        createElement('strong', { text: formatElapsedSeconds(activity.taskElapsedSeconds) }),
+                        createElement('div', {
+                            className: 'gantt__module-meta',
+                            text: `${formatElapsedSeconds(activity.dailyUnionElapsedSeconds)} tempo coperto${activity.baselinePlannedMinutes === null ? ' · non prevista come blocco autonomo' : ` · stima ${formatDuration(activity.baselinePlannedMinutes)}`}`
+                        })
+                    ]),
+                    createElement('div', { attributes: { role: 'cell' } }, [
+                        createElement('span', { text: formatDate(activity.startDate, locale) }),
+                        createElement('span', { className: 'gantt__module-meta', text: ` → ${formatDate(activity.endDate, locale)}` })
+                    ]),
+                    track
+                ]);
+                elements.ganttRows.append(row);
+            });
 
             modules.forEach(module => {
                 const modulePresentation = buildModuleWorkPackagePresentation(currentDatabase.releasePlan, module, locale);
@@ -4347,12 +4907,17 @@
                     ])
                     : null;
                 const identity = createElement('div', { attributes: { role: 'cell' } }, [
-                    createElement('span', { className: 'gantt__module-title', text: module.title }),
+                    createElement('span', {
+                        className: 'gantt__module-title',
+                        text: module.completedTopicCount > 0 ? `${module.title} · residuo` : module.title
+                    }),
                     createElement('span', {
                         className: 'gantt__module-meta',
                         text: module.mode === 'buffer'
                             ? 'Pausa / buffer'
-                            : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
+                            : module.completedTopicCount > 0
+                                ? `${module.remainingTopicCount} argomenti residui · ${module.completedTopicCount} completati${isCritical ? ' · percorso critico' : ''}`
+                                : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
                     }),
                     moduleSnapshotDetails
                 ]);
@@ -4361,7 +4926,7 @@
                     createElement('strong', { text: module.mode === 'buffer' ? `${module.weeks} sett.` : formatDuration(module.totalMinutes) }),
                     createElement('div', {
                         className: 'gantt__module-meta',
-                        text: `${module.weeks} ${module.weeks === 1 ? 'settimana' : 'settimane'}`
+                        text: `${module.weeks} ${module.weeks === 1 ? 'settimana' : 'settimane'}${module.completedMinutes > 0 ? ' · effort residuo' : ''}`
                     })
                 ]);
 
@@ -4370,28 +4935,7 @@
                     createElement('span', { className: 'gantt__module-meta', text: ` → ${formatDate(module.endDate, locale)}` })
                 ]);
 
-                const track = createElement('div', {
-                    className: 'gantt__track',
-                    attributes: { role: 'cell' }
-                });
-                months.forEach(month => {
-                    const label = createElement('span', {
-                        className: 'gantt__month-label',
-                        text: month.displayLabel,
-                        attributes: { 'aria-hidden': 'true' }
-                    });
-                    label.style.left = `${month.offsetDays / totalDays * 100}%`;
-                    label.style.width = `${month.durationDays / totalDays * 100}%`;
-                    track.append(label);
-                });
-                months.slice(1).forEach(month => {
-                    const line = createElement('span', {
-                        className: 'gantt__month-line',
-                        attributes: { 'aria-hidden': 'true' }
-                    });
-                    line.style.left = `${month.offsetDays / totalDays * 100}%`;
-                    track.append(line);
-                });
+                const track = createGanttTrack(months, totalDays);
                 if (module.weeks > 0) {
                     const left = daysBetween(currentSchedule.startDate, module.startDate) / totalDays * 100;
                     const width = (daysBetween(module.startDate, module.endDate) + 1) / totalDays * 100;
@@ -4408,6 +4952,8 @@
                     bar.style.background = module.color;
                     bar.addEventListener('click', () => {
                         selectedModuleId = module.id;
+                        selectedActualWeekStart = null;
+                        selectedActualActivityId = null;
                         selectedWeekIndex = 0;
                         renderSelectedWeek();
                         elements.weekDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -4420,8 +4966,79 @@
             });
         }
 
+        function renderSelectedActualWeek() {
+            const actualWeeks = currentSchedule.actualWeeks;
+            const week = actualWeeks.find(item => item.startDate === selectedActualWeekStart);
+            if (!week) {
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
+                setHidden(elements.weekDetail, true);
+                return;
+            }
+            const locale = currentDatabase.metadata.locale;
+            const presentation = buildWeeklyActualWorkPresentation(
+                currentDatabase.releasePlan,
+                week.startDate,
+                week.endDate,
+                locale,
+                currentDatabase.metadata.timeZone
+            );
+            const selectedActivity = currentSchedule.actualActivities
+                .find(activity => activity.id === selectedActualActivityId);
+            const heading = createElement('div', { className: 'section-heading' }, [
+                createElement('div', {}, [
+                    createElement('span', {
+                        className: 'eyebrow eyebrow--dark',
+                        text: `Settimana svolta ${actualWeeks.indexOf(week) + 1} di ${actualWeeks.length}`
+                    }),
+                    createElement('h2', { text: selectedActivity?.title || 'Attività ProfAssistant della settimana' }),
+                    createElement('p', {
+                        className: 'muted',
+                        text: `${formatDate(week.startDate, locale, { year: true })} — ${formatDate(week.endDate, locale, { year: true })}`
+                    })
+                ]),
+                createElement('button', {
+                    className: 'icon-button',
+                    type: 'button',
+                    text: '×',
+                    attributes: { 'aria-label': 'Chiudi dettaglio' }
+                })
+            ]);
+            heading.querySelector('button').addEventListener('click', () => {
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
+                renderSelectedWeek();
+            });
+
+            const tabs = createElement('div', {
+                className: 'week-tabs',
+                attributes: { 'aria-label': 'Settimane con attività svolte' }
+            });
+            actualWeeks.forEach((actualWeek, index) => {
+                const button = createElement('button', {
+                    className: 'week-tab',
+                    type: 'button',
+                    text: `${index + 1} · ${formatDate(actualWeek.startDate, locale)}`,
+                    attributes: { 'aria-pressed': actualWeek.startDate === week.startDate }
+                });
+                button.addEventListener('click', () => {
+                    selectedActualWeekStart = actualWeek.startDate;
+                    selectedActualActivityId = null;
+                    renderSelectedWeek();
+                });
+                tabs.append(button);
+            });
+
+            elements.weekDetail.append(heading, tabs, renderWeeklyActualWork(presentation, selectedActualActivityId));
+            setHidden(elements.weekDetail, false);
+        }
+
         function renderSelectedWeek() {
             clear(elements.weekDetail);
+            if (selectedActualWeekStart) {
+                renderSelectedActualWeek();
+                return;
+            }
             if (!selectedModuleId) {
                 setHidden(elements.weekDetail, true);
                 return;
@@ -4455,6 +5072,8 @@
             ]);
             heading.querySelector('button').addEventListener('click', () => {
                 selectedModuleId = null;
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
                 renderSelectedWeek();
             });
 
@@ -4532,7 +5151,7 @@
             });
             if (agenda.placementMode === 'abstract_weekly_capacity') {
                 agendaGrid.append(createElement('p', {
-                    text: 'Nessuna fascia oraria futura. Le ore della settimana sono capacità agentica equivalente per il forecast macro; gli intervalli reali compaiono soltanto nel consuntivo attestato.'
+                    text: 'Le schede sopra rappresentano il forecast macro e non generano fasce orarie future. Sotto compaiono soltanto le attività realmente svolte o in corso con tempo attestato.'
                 }));
             }
             if (agenda.placementMode !== 'abstract_weekly_capacity') agenda.days.forEach(day => {
@@ -4586,10 +5205,153 @@
                 agendaGrid.append(dayCard);
             });
 
+            const weeklyActual = buildWeeklyActualWorkPresentation(
+                currentDatabase.releasePlan,
+                agenda.weekStart,
+                agenda.weekEnd,
+                locale,
+                currentDatabase.metadata.timeZone
+            );
+            const actualReplacesForecast = weeklyActual?.displayMode === 'actual';
+            const weeklyActualNode = actualReplacesForecast ? renderWeeklyActualWork(weeklyActual) : null;
+
             elements.weekDetail.append(heading, tabs);
-            if (snapshotNote) elements.weekDetail.append(snapshotNote);
-            elements.weekDetail.append(allocations, agendaGrid);
+            if (!actualReplacesForecast) {
+                if (snapshotNote) elements.weekDetail.append(snapshotNote);
+                elements.weekDetail.append(allocations, agendaGrid);
+            }
+            if (weeklyActualNode) elements.weekDetail.append(weeklyActualNode);
             setHidden(elements.weekDetail, false);
+        }
+
+        function renderWeeklyActualWork(presentation, selectedActivityId = null) {
+            const summary = createElement('div', { className: 'weekly-actual__summary' }, [
+                actualSummaryMetric(
+                    'Totale ore della settimana',
+                    presentation.summary.dailyUnionText,
+                    'Tempo di calendario senza contare due volte le sovrapposizioni'
+                ),
+                actualSummaryMetric(
+                    'Somma durate task',
+                    presentation.summary.taskElapsedText,
+                    'Può essere maggiore del totale per il lavoro in parallelo'
+                ),
+                actualSummaryMetric(
+                    'Parallelismo osservato',
+                    presentation.summary.parallelismText,
+                    `${presentation.summary.calendarOverlapText} sovrapposti rispetto all’esecuzione seriale`
+                ),
+                actualSummaryMetric(
+                    'Durate non collocate',
+                    presentation.summary.unplacedText,
+                    'Attestate, ma senza una fascia oraria inventata'
+                ),
+                actualSummaryMetric(
+                    'Attività in corso',
+                    presentation.summary.openEntryCount,
+                    'Escluse dai totali finché non hanno una fine attestata'
+                )
+            ]);
+            const activities = createElement('div', {
+                className: 'allocation-list allocation-list--release weekly-actual__activities'
+            });
+            presentation.activities.forEach(activity => {
+                const comparison = createElement('details', { className: 'allocation-pill__snapshot' }, [
+                    createElement('summary', { text: 'Confronto con il piano' }),
+                    createElement('p', { text: activity.comparisonText }),
+                    createElement('p', { text: activity.planImpact })
+                ]);
+                const activityNode = createElement('article', {
+                    className: `allocation-pill allocation-pill--release weekly-actual-activity${activity.id === selectedActivityId ? ' weekly-actual-activity--selected' : ''}`
+                }, [
+                    createElement('strong', { text: activity.title }),
+                    createElement('span', { className: 'weekly-actual-activity__kind', text: activity.kindLabel }),
+                    createElement('span', {
+                        className: 'allocation-pill__hours',
+                        text: `Task attestati: ${activity.taskElapsedText} · tempo coperto: ${activity.dailyUnionText}`
+                    }),
+                    createElement('p', { text: activity.summary }),
+                    comparison
+                ]);
+                activityNode.style.setProperty('--actual-activity-color', activity.color);
+                activities.append(activityNode);
+            });
+            const days = createElement('div', { className: 'weekly-actual__days' });
+
+            if (presentation.empty) {
+                days.append(createElement('p', { className: 'muted', text: presentation.emptyText }));
+            } else {
+                presentation.days.forEach(day => {
+                    const groups = createElement('div', { className: 'actual-agenda' });
+                    day.groups.forEach(group => {
+                        const intervalDetails = createElement('ul', { className: 'actual-session__details-list' });
+                        group.intervals.forEach(interval => {
+                            intervalDetails.append(createElement('li', {}, [
+                                createElement('strong', { text: interval.timingText }),
+                                createElement('span', { text: `${interval.roleTask}: ${interval.description}` })
+                            ]));
+                        });
+                        const timeColumn = createElement('div', { className: 'session__time actual-session__time' });
+                        group.timingLines.forEach(timingLine => {
+                            timeColumn.append(createElement('span', { text: timingLine }));
+                        });
+                        const content = createElement('div', {}, [
+                            createElement('div', { className: 'session__title', text: group.activityTitle }),
+                            createElement('div', {
+                                className: 'session__description',
+                                text: `${group.referenceText} · ${group.elapsedText}`
+                            }),
+                            group.topicText
+                                ? createElement('p', { className: 'actual-session__summary', text: group.topicText })
+                                : null,
+                            createElement('details', { className: 'actual-session__details' }, [
+                                createElement('summary', {
+                                    text: `Cosa è stato fatto · ${group.intervals.length} ${group.intervals.length === 1 ? 'intervallo' : 'intervalli'}`
+                                }),
+                                createElement('p', { text: group.descriptionText }),
+                                intervalDetails,
+                                group.workPackagesText
+                                    ? createElement('small', { text: `Work package: ${group.workPackagesText}` })
+                                    : null
+                            ])
+                        ]);
+                        const session = createElement('article', {
+                            className: `session actual-session${group.activityId === selectedActivityId ? ' actual-session--selected' : ''}`
+                        }, [timeColumn, content]);
+                        session.style.setProperty('--session-color', group.activityColor);
+                        groups.append(session);
+                    });
+                    const openText = day.openEntryCount
+                        ? ` · ${day.openEntryCount} ${day.openEntryCount === 1 ? 'attività in corso' : 'attività in corso'}`
+                        : '';
+                    days.append(createElement('section', { className: 'weekly-actual-day' }, [
+                        createElement('div', { className: 'weekly-actual-day__heading' }, [
+                            createElement('h4', { text: day.dayName }),
+                            createElement('span', {
+                                text: `Tempo coperto ${day.dailyUnionText} · somma task ${day.taskElapsedText}${openText}`
+                            })
+                        ]),
+                        groups
+                    ]));
+                });
+            }
+
+            return createElement('section', { className: 'weekly-actual', attributes: { 'aria-labelledby': 'weeklyActualTitle' } }, [
+                createElement('div', { className: 'weekly-actual__heading' }, [
+                    createElement('div', {}, [
+                        createElement('span', { className: 'eyebrow eyebrow--dark', text: 'Piano riconciliato' }),
+                        createElement('h3', { text: 'Attività svolte e collocazione nel piano', attributes: { id: 'weeklyActualTitle' } })
+                    ]),
+                    createElement('p', { text: presentation.coverageText })
+                ]),
+                activities,
+                summary,
+                days,
+                createElement('aside', { className: 'weekly-actual__replan' }, [
+                    createElement('strong', { text: presentation.replanning.label }),
+                    createElement('p', { text: presentation.replanning.text })
+                ])
+            ]);
         }
 
         function createInputLabel(labelText, input) {
@@ -4946,6 +5708,8 @@
                     draft.state.progress = {};
                 }, 'Piano aggiornato');
                 selectedModuleId = null;
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
                 elements.planDialog.close();
             } catch (error) {
                 showFormError(elements.planError, error);
@@ -4959,6 +5723,8 @@
                     : 'Creare un nuovo database? Le eventuali modifiche non salvate verranno perse.';
                 if (!window.confirm(message)) return;
                 selectedModuleId = null;
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
                 plannerStore.createNew();
             });
 

@@ -24,7 +24,9 @@ import {
     buildActualWorkLogPresentation,
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
-    buildModuleWorkPackagePresentation
+    buildModuleWorkPackagePresentation,
+    buildWeeklyActualWorkPresentation,
+    formatElapsedSeconds
 } from './release-presentation.js';
 import { plannerStore } from './store.js';
 
@@ -166,6 +168,8 @@ let currentDatabase = null;
 let currentSchedule = null;
 let currentDatabaseConfiguration = null;
 let selectedModuleId = null;
+let selectedActualWeekStart = null;
+let selectedActualActivityId = null;
 let selectedWeekIndex = 0;
 let settingsDraft = null;
 let planDraft = null;
@@ -794,6 +798,41 @@ function renderOverview() {
     }
 }
 
+function createGanttTrack(months, totalDays) {
+    const track = createElement('div', {
+        className: 'gantt__track',
+        attributes: { role: 'cell' }
+    });
+    months.forEach(month => {
+        const label = createElement('span', {
+            className: 'gantt__month-label',
+            text: month.displayLabel,
+            attributes: { 'aria-hidden': 'true' }
+        });
+        label.style.left = `${month.offsetDays / totalDays * 100}%`;
+        label.style.width = `${month.durationDays / totalDays * 100}%`;
+        track.append(label);
+    });
+    months.slice(1).forEach(month => {
+        const line = createElement('span', {
+            className: 'gantt__month-line',
+            attributes: { 'aria-hidden': 'true' }
+        });
+        line.style.left = `${month.offsetDays / totalDays * 100}%`;
+        track.append(line);
+    });
+    return track;
+}
+
+function reconciliationKindLabel(kind) {
+    return {
+        planned: 'Attività prevista',
+        anticipated: 'Anticipo di attività futura',
+        added: 'Attività aggiunta',
+        added_and_anticipated: 'Attività aggiunta e anticipo'
+    }[kind] || 'Attività svolta';
+}
+
 function renderGantt() {
     clear(elements.ganttRows);
     const modules = currentSchedule.modules;
@@ -805,6 +844,60 @@ function renderGantt() {
     const totalDays = Math.max(1, daysBetween(currentSchedule.startDate, currentSchedule.endDate) + 1);
     const locale = currentDatabase.metadata.locale;
     const months = getTimelineMonths(currentSchedule.startDate, currentSchedule.endDate, locale);
+
+    currentSchedule.actualActivities.forEach(activity => {
+        const track = createGanttTrack(months, totalDays);
+        const left = daysBetween(currentSchedule.startDate, activity.startDate) / totalDays * 100;
+        const width = (daysBetween(activity.startDate, activity.endDate) + 1) / totalDays * 100;
+        const bar = createElement('button', {
+            className: `gantt__bar gantt__bar--actual gantt__bar--${activity.kind}`,
+            type: 'button',
+            title: `Apri ${activity.title}`,
+            attributes: {
+                'aria-label': `Apri le attività svolte per ${activity.title}`
+            }
+        });
+        bar.style.left = `${left}%`;
+        bar.style.width = `${Math.max(width, 1.2)}%`;
+        bar.style.background = activity.color;
+        bar.addEventListener('click', () => {
+            const week = currentSchedule.actualWeeks.find(item => (
+                activity.startDate >= item.startDate && activity.startDate <= item.endDate
+            ));
+            selectedActualWeekStart = week?.startDate || activity.startDate;
+            selectedActualActivityId = activity.id;
+            selectedModuleId = null;
+            renderSelectedWeek();
+            elements.weekDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        track.append(bar);
+
+        const row = createElement('div', {
+            className: `gantt__row gantt__row--actual gantt__row--${activity.kind}`,
+            attributes: { role: 'row' }
+        }, [
+            createElement('div', { attributes: { role: 'cell' } }, [
+                createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                createElement('span', {
+                    className: 'gantt__module-meta',
+                    text: `${reconciliationKindLabel(activity.kind)} · ${activity.closedEntryCount} intervalli conclusi${activity.openEntryCount ? ` · ${activity.openEntryCount} in corso` : ''}`
+                })
+            ]),
+            createElement('div', { attributes: { role: 'cell' } }, [
+                createElement('strong', { text: formatElapsedSeconds(activity.taskElapsedSeconds) }),
+                createElement('div', {
+                    className: 'gantt__module-meta',
+                    text: `${formatElapsedSeconds(activity.dailyUnionElapsedSeconds)} tempo coperto${activity.baselinePlannedMinutes === null ? ' · non prevista come blocco autonomo' : ` · stima ${formatDuration(activity.baselinePlannedMinutes)}`}`
+                })
+            ]),
+            createElement('div', { attributes: { role: 'cell' } }, [
+                createElement('span', { text: formatDate(activity.startDate, locale) }),
+                createElement('span', { className: 'gantt__module-meta', text: ` → ${formatDate(activity.endDate, locale)}` })
+            ]),
+            track
+        ]);
+        elements.ganttRows.append(row);
+    });
 
     modules.forEach(module => {
         const modulePresentation = buildModuleWorkPackagePresentation(currentDatabase.releasePlan, module, locale);
@@ -828,12 +921,17 @@ function renderGantt() {
             ])
             : null;
         const identity = createElement('div', { attributes: { role: 'cell' } }, [
-            createElement('span', { className: 'gantt__module-title', text: module.title }),
+            createElement('span', {
+                className: 'gantt__module-title',
+                text: module.completedTopicCount > 0 ? `${module.title} · residuo` : module.title
+            }),
             createElement('span', {
                 className: 'gantt__module-meta',
                 text: module.mode === 'buffer'
                     ? 'Pausa / buffer'
-                    : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
+                    : module.completedTopicCount > 0
+                        ? `${module.remainingTopicCount} argomenti residui · ${module.completedTopicCount} completati${isCritical ? ' · percorso critico' : ''}`
+                        : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
             }),
             moduleSnapshotDetails
         ]);
@@ -842,7 +940,7 @@ function renderGantt() {
             createElement('strong', { text: module.mode === 'buffer' ? `${module.weeks} sett.` : formatDuration(module.totalMinutes) }),
             createElement('div', {
                 className: 'gantt__module-meta',
-                text: `${module.weeks} ${module.weeks === 1 ? 'settimana' : 'settimane'}`
+                text: `${module.weeks} ${module.weeks === 1 ? 'settimana' : 'settimane'}${module.completedMinutes > 0 ? ' · effort residuo' : ''}`
             })
         ]);
 
@@ -851,28 +949,7 @@ function renderGantt() {
             createElement('span', { className: 'gantt__module-meta', text: ` → ${formatDate(module.endDate, locale)}` })
         ]);
 
-        const track = createElement('div', {
-            className: 'gantt__track',
-            attributes: { role: 'cell' }
-        });
-        months.forEach(month => {
-            const label = createElement('span', {
-                className: 'gantt__month-label',
-                text: month.displayLabel,
-                attributes: { 'aria-hidden': 'true' }
-            });
-            label.style.left = `${month.offsetDays / totalDays * 100}%`;
-            label.style.width = `${month.durationDays / totalDays * 100}%`;
-            track.append(label);
-        });
-        months.slice(1).forEach(month => {
-            const line = createElement('span', {
-                className: 'gantt__month-line',
-                attributes: { 'aria-hidden': 'true' }
-            });
-            line.style.left = `${month.offsetDays / totalDays * 100}%`;
-            track.append(line);
-        });
+        const track = createGanttTrack(months, totalDays);
         if (module.weeks > 0) {
             const left = daysBetween(currentSchedule.startDate, module.startDate) / totalDays * 100;
             const width = (daysBetween(module.startDate, module.endDate) + 1) / totalDays * 100;
@@ -889,6 +966,8 @@ function renderGantt() {
             bar.style.background = module.color;
             bar.addEventListener('click', () => {
                 selectedModuleId = module.id;
+                selectedActualWeekStart = null;
+                selectedActualActivityId = null;
                 selectedWeekIndex = 0;
                 renderSelectedWeek();
                 elements.weekDetail.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -901,8 +980,79 @@ function renderGantt() {
     });
 }
 
+function renderSelectedActualWeek() {
+    const actualWeeks = currentSchedule.actualWeeks;
+    const week = actualWeeks.find(item => item.startDate === selectedActualWeekStart);
+    if (!week) {
+        selectedActualWeekStart = null;
+        selectedActualActivityId = null;
+        setHidden(elements.weekDetail, true);
+        return;
+    }
+    const locale = currentDatabase.metadata.locale;
+    const presentation = buildWeeklyActualWorkPresentation(
+        currentDatabase.releasePlan,
+        week.startDate,
+        week.endDate,
+        locale,
+        currentDatabase.metadata.timeZone
+    );
+    const selectedActivity = currentSchedule.actualActivities
+        .find(activity => activity.id === selectedActualActivityId);
+    const heading = createElement('div', { className: 'section-heading' }, [
+        createElement('div', {}, [
+            createElement('span', {
+                className: 'eyebrow eyebrow--dark',
+                text: `Settimana svolta ${actualWeeks.indexOf(week) + 1} di ${actualWeeks.length}`
+            }),
+            createElement('h2', { text: selectedActivity?.title || 'Attività ProfAssistant della settimana' }),
+            createElement('p', {
+                className: 'muted',
+                text: `${formatDate(week.startDate, locale, { year: true })} — ${formatDate(week.endDate, locale, { year: true })}`
+            })
+        ]),
+        createElement('button', {
+            className: 'icon-button',
+            type: 'button',
+            text: '×',
+            attributes: { 'aria-label': 'Chiudi dettaglio' }
+        })
+    ]);
+    heading.querySelector('button').addEventListener('click', () => {
+        selectedActualWeekStart = null;
+        selectedActualActivityId = null;
+        renderSelectedWeek();
+    });
+
+    const tabs = createElement('div', {
+        className: 'week-tabs',
+        attributes: { 'aria-label': 'Settimane con attività svolte' }
+    });
+    actualWeeks.forEach((actualWeek, index) => {
+        const button = createElement('button', {
+            className: 'week-tab',
+            type: 'button',
+            text: `${index + 1} · ${formatDate(actualWeek.startDate, locale)}`,
+            attributes: { 'aria-pressed': actualWeek.startDate === week.startDate }
+        });
+        button.addEventListener('click', () => {
+            selectedActualWeekStart = actualWeek.startDate;
+            selectedActualActivityId = null;
+            renderSelectedWeek();
+        });
+        tabs.append(button);
+    });
+
+    elements.weekDetail.append(heading, tabs, renderWeeklyActualWork(presentation, selectedActualActivityId));
+    setHidden(elements.weekDetail, false);
+}
+
 function renderSelectedWeek() {
     clear(elements.weekDetail);
+    if (selectedActualWeekStart) {
+        renderSelectedActualWeek();
+        return;
+    }
     if (!selectedModuleId) {
         setHidden(elements.weekDetail, true);
         return;
@@ -936,6 +1086,8 @@ function renderSelectedWeek() {
     ]);
     heading.querySelector('button').addEventListener('click', () => {
         selectedModuleId = null;
+        selectedActualWeekStart = null;
+        selectedActualActivityId = null;
         renderSelectedWeek();
     });
 
@@ -1013,7 +1165,7 @@ function renderSelectedWeek() {
     });
     if (agenda.placementMode === 'abstract_weekly_capacity') {
         agendaGrid.append(createElement('p', {
-            text: 'Nessuna fascia oraria futura. Le ore della settimana sono capacità agentica equivalente per il forecast macro; gli intervalli reali compaiono soltanto nel consuntivo attestato.'
+            text: 'Le schede sopra rappresentano il forecast macro e non generano fasce orarie future. Sotto compaiono soltanto le attività realmente svolte o in corso con tempo attestato.'
         }));
     }
     if (agenda.placementMode !== 'abstract_weekly_capacity') agenda.days.forEach(day => {
@@ -1067,10 +1219,153 @@ function renderSelectedWeek() {
         agendaGrid.append(dayCard);
     });
 
+    const weeklyActual = buildWeeklyActualWorkPresentation(
+        currentDatabase.releasePlan,
+        agenda.weekStart,
+        agenda.weekEnd,
+        locale,
+        currentDatabase.metadata.timeZone
+    );
+    const actualReplacesForecast = weeklyActual?.displayMode === 'actual';
+    const weeklyActualNode = actualReplacesForecast ? renderWeeklyActualWork(weeklyActual) : null;
+
     elements.weekDetail.append(heading, tabs);
-    if (snapshotNote) elements.weekDetail.append(snapshotNote);
-    elements.weekDetail.append(allocations, agendaGrid);
+    if (!actualReplacesForecast) {
+        if (snapshotNote) elements.weekDetail.append(snapshotNote);
+        elements.weekDetail.append(allocations, agendaGrid);
+    }
+    if (weeklyActualNode) elements.weekDetail.append(weeklyActualNode);
     setHidden(elements.weekDetail, false);
+}
+
+function renderWeeklyActualWork(presentation, selectedActivityId = null) {
+    const summary = createElement('div', { className: 'weekly-actual__summary' }, [
+        actualSummaryMetric(
+            'Totale ore della settimana',
+            presentation.summary.dailyUnionText,
+            'Tempo di calendario senza contare due volte le sovrapposizioni'
+        ),
+        actualSummaryMetric(
+            'Somma durate task',
+            presentation.summary.taskElapsedText,
+            'Può essere maggiore del totale per il lavoro in parallelo'
+        ),
+        actualSummaryMetric(
+            'Parallelismo osservato',
+            presentation.summary.parallelismText,
+            `${presentation.summary.calendarOverlapText} sovrapposti rispetto all’esecuzione seriale`
+        ),
+        actualSummaryMetric(
+            'Durate non collocate',
+            presentation.summary.unplacedText,
+            'Attestate, ma senza una fascia oraria inventata'
+        ),
+        actualSummaryMetric(
+            'Attività in corso',
+            presentation.summary.openEntryCount,
+            'Escluse dai totali finché non hanno una fine attestata'
+        )
+    ]);
+    const activities = createElement('div', {
+        className: 'allocation-list allocation-list--release weekly-actual__activities'
+    });
+    presentation.activities.forEach(activity => {
+        const comparison = createElement('details', { className: 'allocation-pill__snapshot' }, [
+            createElement('summary', { text: 'Confronto con il piano' }),
+            createElement('p', { text: activity.comparisonText }),
+            createElement('p', { text: activity.planImpact })
+        ]);
+        const activityNode = createElement('article', {
+            className: `allocation-pill allocation-pill--release weekly-actual-activity${activity.id === selectedActivityId ? ' weekly-actual-activity--selected' : ''}`
+        }, [
+            createElement('strong', { text: activity.title }),
+            createElement('span', { className: 'weekly-actual-activity__kind', text: activity.kindLabel }),
+            createElement('span', {
+                className: 'allocation-pill__hours',
+                text: `Task attestati: ${activity.taskElapsedText} · tempo coperto: ${activity.dailyUnionText}`
+            }),
+            createElement('p', { text: activity.summary }),
+            comparison
+        ]);
+        activityNode.style.setProperty('--actual-activity-color', activity.color);
+        activities.append(activityNode);
+    });
+    const days = createElement('div', { className: 'weekly-actual__days' });
+
+    if (presentation.empty) {
+        days.append(createElement('p', { className: 'muted', text: presentation.emptyText }));
+    } else {
+        presentation.days.forEach(day => {
+            const groups = createElement('div', { className: 'actual-agenda' });
+            day.groups.forEach(group => {
+                const intervalDetails = createElement('ul', { className: 'actual-session__details-list' });
+                group.intervals.forEach(interval => {
+                    intervalDetails.append(createElement('li', {}, [
+                        createElement('strong', { text: interval.timingText }),
+                        createElement('span', { text: `${interval.roleTask}: ${interval.description}` })
+                    ]));
+                });
+                const timeColumn = createElement('div', { className: 'session__time actual-session__time' });
+                group.timingLines.forEach(timingLine => {
+                    timeColumn.append(createElement('span', { text: timingLine }));
+                });
+                const content = createElement('div', {}, [
+                    createElement('div', { className: 'session__title', text: group.activityTitle }),
+                    createElement('div', {
+                        className: 'session__description',
+                        text: `${group.referenceText} · ${group.elapsedText}`
+                    }),
+                    group.topicText
+                        ? createElement('p', { className: 'actual-session__summary', text: group.topicText })
+                        : null,
+                    createElement('details', { className: 'actual-session__details' }, [
+                        createElement('summary', {
+                            text: `Cosa è stato fatto · ${group.intervals.length} ${group.intervals.length === 1 ? 'intervallo' : 'intervalli'}`
+                        }),
+                        createElement('p', { text: group.descriptionText }),
+                        intervalDetails,
+                        group.workPackagesText
+                            ? createElement('small', { text: `Work package: ${group.workPackagesText}` })
+                            : null
+                    ])
+                ]);
+                const session = createElement('article', {
+                    className: `session actual-session${group.activityId === selectedActivityId ? ' actual-session--selected' : ''}`
+                }, [timeColumn, content]);
+                session.style.setProperty('--session-color', group.activityColor);
+                groups.append(session);
+            });
+            const openText = day.openEntryCount
+                ? ` · ${day.openEntryCount} ${day.openEntryCount === 1 ? 'attività in corso' : 'attività in corso'}`
+                : '';
+            days.append(createElement('section', { className: 'weekly-actual-day' }, [
+                createElement('div', { className: 'weekly-actual-day__heading' }, [
+                    createElement('h4', { text: day.dayName }),
+                    createElement('span', {
+                        text: `Tempo coperto ${day.dailyUnionText} · somma task ${day.taskElapsedText}${openText}`
+                    })
+                ]),
+                groups
+            ]));
+        });
+    }
+
+    return createElement('section', { className: 'weekly-actual', attributes: { 'aria-labelledby': 'weeklyActualTitle' } }, [
+        createElement('div', { className: 'weekly-actual__heading' }, [
+            createElement('div', {}, [
+                createElement('span', { className: 'eyebrow eyebrow--dark', text: 'Piano riconciliato' }),
+                createElement('h3', { text: 'Attività svolte e collocazione nel piano', attributes: { id: 'weeklyActualTitle' } })
+            ]),
+            createElement('p', { text: presentation.coverageText })
+        ]),
+        activities,
+        summary,
+        days,
+        createElement('aside', { className: 'weekly-actual__replan' }, [
+            createElement('strong', { text: presentation.replanning.label }),
+            createElement('p', { text: presentation.replanning.text })
+        ])
+    ]);
 }
 
 function createInputLabel(labelText, input) {
@@ -1427,6 +1722,8 @@ function applyPlan(event) {
             draft.state.progress = {};
         }, 'Piano aggiornato');
         selectedModuleId = null;
+        selectedActualWeekStart = null;
+        selectedActualActivityId = null;
         elements.planDialog.close();
     } catch (error) {
         showFormError(elements.planError, error);
@@ -1440,6 +1737,8 @@ function bindEvents() {
             : 'Creare un nuovo database? Le eventuali modifiche non salvate verranno perse.';
         if (!window.confirm(message)) return;
         selectedModuleId = null;
+        selectedActualWeekStart = null;
+        selectedActualActivityId = null;
         plannerStore.createNew();
     });
 

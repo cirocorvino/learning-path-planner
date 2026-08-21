@@ -5,6 +5,9 @@ import test from 'node:test';
 import { normalizeDatabase, updateDatabase } from '../js/model.js';
 import {
     buildPlanSchedule,
+    getActualWorkWeeks,
+    getForecastStartDate,
+    getReconciledActualActivities,
     getModuleWeekAllocations,
     getTimelineMonths,
     getWeekAgenda,
@@ -53,6 +56,78 @@ test('costruisce un Gantt sequenziale con una settimana buffer', () => {
     assert.equal(schedule.startDate, '2026-08-03');
     assert.equal(schedule.endDate, '2026-08-23');
     assert.deepEqual(schedule.modules.map(module => module.weeks), [1, 1, 1]);
+});
+
+test('porta avanti il forecast disatteso e pianifica soltanto i minuti residui', () => {
+    const value = database();
+    value.state.progress = {
+        goals: { completedMinutes: 60, completed: true },
+        environment: { completedMinutes: 60, completed: false }
+    };
+    value.releasePlan = {
+        actualWorkLog: {
+            entries: [{
+                id: 'actual-checkpoint',
+                date: '2026-08-05',
+                references: [],
+                workPackageIds: [],
+                timing: {
+                    kind: 'clock_interval',
+                    startAt: '2026-08-05T09:00:00+02:00',
+                    endAt: '2026-08-05T11:00:00+02:00',
+                    timeZone: 'Europe/Rome',
+                    actualClockElapsedSeconds: 7200
+                },
+                agentEffortEquivalentMinutes: null
+            }]
+        },
+        scheduleReconciliation: {
+            activities: [{
+                id: 'onda-one-actual',
+                title: 'Onda 1 - Baseline',
+                kind: 'planned',
+                color: '#0f766e',
+                status: 'partial',
+                startDate: '2026-08-03',
+                endDate: '2026-08-09',
+                sourceModuleIds: ['foundations'],
+                sourceTopicIds: ['goals'],
+                entryIds: ['actual-checkpoint'],
+                baselinePlannedMinutes: 60,
+                summary: 'Baseline svolta.',
+                planImpact: 'Il residuo prosegue.'
+            }]
+        }
+    };
+
+    const actualWeeks = getActualWorkWeeks(value);
+    const actualActivities = getReconciledActualActivities(value);
+    const schedule = buildPlanSchedule(value);
+    const allocations = getModuleWeekAllocations(value, 'foundations', 0);
+
+    assert.equal(getForecastStartDate(value), '2026-08-10');
+    assert.deepEqual(actualWeeks.map(week => [week.startDate, week.endDate]), [
+        ['2026-08-03', '2026-08-09']
+    ]);
+    assert.deepEqual(actualActivities.map(activity => [
+        activity.title,
+        activity.taskElapsedSeconds,
+        activity.dailyUnionElapsedSeconds
+    ]), [['Onda 1 - Baseline', 7200, 7200]]);
+    assert.equal(schedule.actualActivities[0].id, 'onda-one-actual');
+    assert.equal(schedule.startDate, '2026-08-03');
+    assert.equal(schedule.forecastStartDate, '2026-08-10');
+    assert.equal(schedule.totalMinutes, 360);
+    assert.equal(schedule.endDate, '2026-08-30');
+    assert.deepEqual(schedule.modules.map(module => module.startDate), [
+        '2026-08-10',
+        '2026-08-17',
+        '2026-08-24'
+    ]);
+    assert.equal(schedule.modules[0].originalTotalMinutes, 180);
+    assert.equal(schedule.modules[0].completedMinutes, 120);
+    assert.equal(schedule.modules[0].remainingTopicCount, 1);
+    assert.deepEqual(allocations.map(item => [item.topicId, item.minutes]), [['environment', 60]]);
 });
 
 test('un target oltre la capacità viene limitato e segnalato', () => {

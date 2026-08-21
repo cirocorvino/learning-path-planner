@@ -1,9 +1,10 @@
 import {
+    calculateActualEntriesMetrics,
     calculateActualWorkMetrics,
     releaseWorkPackagesForTopic,
     summarizeModuleWorkPackageSnapshot
 } from './model.js';
-import { formatDate, formatDuration } from './planner.js';
+import { formatDate, formatDayName, formatDuration, parseIsoDate } from './planner.js';
 
 function contributorViewModel(workPackage, locale) {
     const snapshotDate = formatDate(workPackage.lastReviewedAt, locale, { year: true });
@@ -39,6 +40,15 @@ function formatClock(timestamp, locale, timeZone) {
     }).format(new Date(timestamp));
 }
 
+function formatClockMinute(timestamp, locale, timeZone) {
+    return new Intl.DateTimeFormat(locale, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+        timeZone
+    }).format(new Date(timestamp));
+}
+
 function formatOutputTimestamp(timestamp, locale, timeZone) {
     if (!timestamp) return '';
     return new Intl.DateTimeFormat(locale, {
@@ -53,7 +63,53 @@ function formatOutputTimestamp(timestamp, locale, timeZone) {
     }).format(new Date(timestamp));
 }
 
-function actualEntryViewModel(entry, sourceById, outputEvidenceById, workPackageById, locale, outputTimeZone) {
+function dayTimingText(entry, dayDate, elapsedSeconds, locale) {
+    const timing = entry.timing;
+    if (timing.kind !== 'clock_interval') {
+        return timing.kind === 'unplaced_duration'
+            ? `Durata attestata non collocata · ${formatElapsedSeconds(elapsedSeconds)}`
+            : `Dalle ${formatClock(timing.startAt, locale, timing.timeZone)} · in corso`;
+    }
+
+    const startDate = timing.startAt.slice(0, 10);
+    const endDate = timing.endAt.slice(0, 10);
+    const isSplit = startDate !== endDate;
+    const startText = dayDate === startDate
+        ? formatClock(timing.startAt, locale, timing.timeZone)
+        : '00:00:00';
+    const endText = dayDate === endDate
+        ? formatClock(timing.endAt, locale, timing.timeZone)
+        : '24:00:00';
+    return `${startText}–${endText} · ${formatElapsedSeconds(elapsedSeconds)}${isSplit ? ' · quota del giorno' : ''}`;
+}
+
+function dayClockText(entry, dayDate, locale) {
+    const timing = entry.timing;
+    if (timing.kind === 'unplaced_duration') return 'Durata non collocata';
+    if (timing.kind === 'open_interval') {
+        return `Dalle ${formatClockMinute(timing.startAt, locale, timing.timeZone)} · in corso`;
+    }
+    const startDate = timing.startAt.slice(0, 10);
+    const endDate = timing.endAt.slice(0, 10);
+    const startText = dayDate === startDate
+        ? formatClockMinute(timing.startAt, locale, timing.timeZone)
+        : '00:00';
+    const endText = dayDate === endDate
+        ? formatClockMinute(timing.endAt, locale, timing.timeZone)
+        : '24:00';
+    return `${startText}–${endText}`;
+}
+
+function actualEntryViewModel(
+    entry,
+    sourceById,
+    outputEvidenceById,
+    workPackageById,
+    locale,
+    outputTimeZone,
+    dayDate,
+    dayElapsedSeconds
+) {
     const timing = entry.timing;
     let timingText;
     let elapsedSeconds = 0;
@@ -73,8 +129,14 @@ function actualEntryViewModel(entry, sourceById, outputEvidenceById, workPackage
         description: entry.description,
         status: entry.status,
         timingKind: timing.kind,
+        timingSortKey: timing.startAt || `${entry.date}T23:59:59Z`,
         timingText,
         elapsedSeconds,
+        dayElapsedSeconds,
+        dayElapsedText: formatElapsedSeconds(dayElapsedSeconds),
+        dayTimingText: dayTimingText(entry, dayDate, dayElapsedSeconds, locale),
+        dayClockText: dayClockText(entry, dayDate, locale),
+        references: entry.references.map(reference => ({ ...reference })),
         referencesText: entry.references.map(reference => `${reference.kind.toUpperCase()} ${reference.reference}`).join(' · '),
         workPackagesText: entry.workPackageIds
             .map(workPackageId => workPackageById.get(workPackageId)?.title || workPackageId)
@@ -142,6 +204,9 @@ export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', ou
         days: metrics.daily.map(day => ({
             date: day.date,
             dateText: formatDate(day.date, locale, { year: true }),
+            taskElapsedSeconds: day.taskElapsedSeconds,
+            dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
+            unplacedElapsedSeconds: day.unplacedElapsedSeconds,
             taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
             dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
             unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
@@ -152,7 +217,9 @@ export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', ou
                 outputEvidenceById,
                 workPackageById,
                 locale,
-                outputTimeZone
+                outputTimeZone,
+                day.date,
+                day.entryElapsedSeconds[entry.id] || 0
             ))
         })),
         referenceTotals: totals(metrics.referenceTotals),
@@ -164,6 +231,185 @@ export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', ou
             entryId,
             sourceById.get(entry.timestampSourceId)
         ]))
+    };
+}
+
+function referenceLabel(reference) {
+    const kind = reference.kind === 'pr'
+        ? 'PR'
+        : reference.kind === 'issue'
+            ? 'Issue'
+            : reference.kind.toUpperCase();
+    return `${kind} ${reference.reference}`;
+}
+
+function uniqueText(values) {
+    return [...new Set(values.filter(Boolean))];
+}
+
+const RECONCILIATION_KIND_LABELS = {
+    planned: 'Attività prevista',
+    anticipated: 'Attività futura anticipata',
+    added: 'Attività aggiunta al piano',
+    added_and_anticipated: 'Attività aggiunta e anticipo'
+};
+
+function buildReconciliationActivities(releasePlan, locale) {
+    const reconciliation = releasePlan?.scheduleReconciliation;
+    if (!reconciliation) return [];
+    const entryById = new Map(releasePlan.actualWorkLog.entries.map(entry => [entry.id, entry]));
+    return reconciliation.activities.map(activity => {
+        const entries = activity.entryIds.map(entryId => entryById.get(entryId)).filter(Boolean);
+        const metrics = calculateActualEntriesMetrics(entries);
+        const plannedSeconds = activity.baselinePlannedMinutes === null
+            ? null
+            : activity.baselinePlannedMinutes * 60;
+        const varianceSeconds = plannedSeconds === null
+            ? null
+            : plannedSeconds - metrics.taskElapsedSeconds;
+        let comparisonText = 'Non era presente come blocco autonomo nella baseline.';
+        if (plannedSeconds !== null) {
+            comparisonText = varianceSeconds >= 0
+                ? `Stima del blocco ${formatDuration(activity.baselinePlannedMinutes)} · task attestati ${formatElapsedSeconds(metrics.taskElapsedSeconds)} · margine osservato ${formatElapsedSeconds(varianceSeconds)}`
+                : `Stima del blocco ${formatDuration(activity.baselinePlannedMinutes)} · task attestati ${formatElapsedSeconds(metrics.taskElapsedSeconds)} · scostamento oltre stima ${formatElapsedSeconds(Math.abs(varianceSeconds))}`;
+        }
+        return {
+            ...activity,
+            kindLabel: RECONCILIATION_KIND_LABELS[activity.kind] || activity.kind,
+            taskElapsedSeconds: metrics.taskElapsedSeconds,
+            taskElapsedText: formatElapsedSeconds(metrics.taskElapsedSeconds),
+            dailyUnionElapsedSeconds: metrics.dailyUnionElapsedSeconds,
+            dailyUnionText: formatElapsedSeconds(metrics.dailyUnionElapsedSeconds),
+            openEntryCount: metrics.openEntryCount,
+            entryCount: metrics.entryCount,
+            comparisonText,
+            periodText: `${formatDate(activity.startDate, locale, { year: true })} — ${formatDate(activity.endDate, locale, { year: true })}`
+        };
+    });
+}
+
+function groupWeeklyEntries(entries, activityByEntryId) {
+    const groups = new Map();
+    entries.forEach(entry => {
+        const activity = activityByEntryId.get(entry.id) || null;
+        const deliveryReferences = entry.references.filter(reference => ['issue', 'pr'].includes(reference.kind));
+        const referenceKey = deliveryReferences.length
+            ? deliveryReferences.map(reference => `${reference.kind}:${reference.reference}`).sort().join('|')
+            : `task:${entry.roleTask}`;
+        const key = `${activity?.id || 'unclassified'}|${referenceKey}`;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                activityId: activity?.id || '',
+                activityTitle: activity?.title || entry.topicLabel,
+                activityKindLabel: activity?.kindLabel || 'Attività attestata',
+                activityColor: activity?.color || '#64748b',
+                referenceText: deliveryReferences.length
+                    ? deliveryReferences.map(referenceLabel).join(' · ')
+                    : entry.roleTask,
+                topics: [],
+                descriptions: [],
+                roles: [],
+                workPackages: [],
+                elapsedSeconds: 0,
+                openEntryCount: 0,
+                intervals: [],
+                firstTimingKey: entry.timingSortKey
+            });
+        }
+        const group = groups.get(key);
+        group.topics.push(entry.topicLabel);
+        group.descriptions.push(entry.description);
+        group.roles.push(entry.roleTask);
+        group.workPackages.push(entry.workPackagesText);
+        group.elapsedSeconds += entry.dayElapsedSeconds;
+        if (entry.timingKind === 'open_interval') group.openEntryCount += 1;
+        group.intervals.push({
+            id: entry.id,
+            roleTask: entry.roleTask,
+            timingText: entry.dayTimingText,
+            clockText: entry.dayClockText,
+            description: entry.description,
+            status: entry.status
+        });
+    });
+
+    return [...groups.values()].map(group => ({
+        ...group,
+        topicText: uniqueText(group.topics).join(' · '),
+        descriptionText: uniqueText(group.descriptions).join(' '),
+        rolesText: uniqueText(group.roles).join(' · '),
+        workPackagesText: uniqueText(group.workPackages).join(' · '),
+        elapsedText: formatElapsedSeconds(group.elapsedSeconds),
+        timingLines: uniqueText(group.intervals.map(interval => interval.clockText))
+    })).sort((left, right) => left.firstTimingKey.localeCompare(right.firstTimingKey));
+}
+
+export function buildWeeklyActualWorkPresentation(
+    releasePlan,
+    weekStart,
+    weekEnd,
+    locale = 'it-IT',
+    outputTimeZone = 'Europe/Rome'
+) {
+    const actual = buildActualWorkLogPresentation(releasePlan, locale, outputTimeZone);
+    if (!actual) return null;
+
+    const reconciliationActivities = buildReconciliationActivities(releasePlan, locale)
+        .filter(activity => activity.startDate <= weekEnd && activity.endDate >= weekStart);
+    const activityByEntryId = new Map();
+    reconciliationActivities.forEach(activity => {
+        activity.entryIds.forEach(entryId => activityByEntryId.set(entryId, activity));
+    });
+
+    const days = actual.days
+        .filter(day => day.date >= weekStart && day.date <= weekEnd)
+        .map(day => ({
+            ...day,
+            dayName: formatDayName(parseIsoDate(day.date), locale),
+            groups: groupWeeklyEntries(day.entries, activityByEntryId)
+        }));
+    const taskElapsedSeconds = days.reduce(
+        (total, day) => total + day.entries.reduce((dayTotal, entry) => dayTotal + entry.dayElapsedSeconds, 0),
+        0
+    );
+    const dailyUnionElapsedSeconds = days.reduce(
+        (total, day) => total + day.dailyUnionElapsedSeconds,
+        0
+    );
+    const unplacedElapsedSeconds = days.reduce(
+        (total, day) => total + day.unplacedElapsedSeconds,
+        0
+    );
+    const openEntryCount = days.reduce((total, day) => total + day.openEntryCount, 0);
+    const placedTaskElapsedSeconds = Math.max(0, taskElapsedSeconds - unplacedElapsedSeconds);
+    const parallelismFactor = dailyUnionElapsedSeconds > 0
+        ? placedTaskElapsedSeconds / dailyUnionElapsedSeconds
+        : null;
+    const calendarOverlapSeconds = Math.max(0, placedTaskElapsedSeconds - dailyUnionElapsedSeconds);
+
+    return {
+        empty: days.length === 0,
+        displayMode: days.length === 0 ? 'forecast' : 'actual',
+        emptyText: 'Nessuna attività attestata in questa settimana. Le attività future restano nel forecast macro e non diventano appuntamenti inventati.',
+        coverageText: 'Le attività svolte sono ricondotte al piano: previste, anticipate oppure aggiunte. Gli orari provengono dagli intervalli attestati; le sovrapposizioni parallele sono contate una sola volta nel tempo coperto.',
+        activities: reconciliationActivities,
+        summary: {
+            dailyUnionText: formatElapsedSeconds(dailyUnionElapsedSeconds),
+            taskElapsedText: formatElapsedSeconds(taskElapsedSeconds),
+            unplacedText: formatElapsedSeconds(unplacedElapsedSeconds),
+            parallelismText: parallelismFactor === null
+                ? 'Non calcolabile'
+                : `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(parallelismFactor)}×`,
+            calendarOverlapText: formatElapsedSeconds(calendarOverlapSeconds),
+            openEntryCount
+        },
+        days,
+        replanning: {
+            label: 'Effetto sul piano',
+            text: releasePlan.scheduleReconciliation?.forecastRule
+                || 'Il lavoro previsto riduce il relativo residuo; quello anticipato viene tolto dalla sua collocazione futura; quello aggiunto consuma calendario e sposta le attività successive. Le percentuali funzionali cambiano soltanto per risultati verificati.'
+        }
     };
 }
 

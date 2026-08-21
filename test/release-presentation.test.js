@@ -5,7 +5,8 @@ import {
     buildActualWorkLogPresentation,
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
-    buildModuleWorkPackagePresentation
+    buildModuleWorkPackagePresentation,
+    buildWeeklyActualWorkPresentation
 } from '../js/release-presentation.js';
 import { readFileSync } from 'node:fs';
 
@@ -149,4 +150,179 @@ test('presenta intervallo task, unione giornaliera, output GitHub ed effort agen
     assert.equal(presentation.days[0].entries[0].timingText, '17:00:57–17:02:47 · 1 min 50 s');
     assert.match(presentation.days[0].entries[0].source.reference, /Handoff TL/);
     assert.match(presentation.days[0].entries[0].outputEvidence[0].text, /#199.*Issue aperta/);
+});
+
+test('presenta nella settimana solo attività attestate, raggruppate per issue e PR', () => {
+    const plan = {
+        workPackages: [
+            { id: 'assessment', title: 'Assessment' },
+            { id: 'lpd', title: 'LPD' },
+            { id: 'security', title: 'Sicurezza AI' }
+        ],
+        actualWorkLog: {
+            entryRule: 'Solo dati attestati.',
+            coverageNote: 'Copertura task Codex.',
+            semantics: {
+                agenticEffort: 'Separato.',
+                humanLeadTime: 'Separato.',
+                observedClock: 'Intervallo osservato.'
+            },
+            sources: [{ id: 'handoff', reference: 'Handoff TL', summary: 'Timestamp attestati.' }],
+            outputEvidence: [],
+            entries: [
+                {
+                    id: 'assessment-one',
+                    date: '2026-08-20',
+                    roleTask: 'Coder assessment',
+                    topicLabel: 'Prompt assessment',
+                    workPackageIds: ['assessment'],
+                    description: 'Foundation assessment consegnata.',
+                    status: 'complete',
+                    references: [
+                        { kind: 'issue', reference: '#195' },
+                        { kind: 'pr', reference: '#197' }
+                    ],
+                    timing: {
+                        kind: 'clock_interval',
+                        startAt: '2026-08-20T22:50:39+02:00',
+                        endAt: '2026-08-20T23:36:05+02:00',
+                        timeZone: 'Europe/Rome',
+                        actualClockElapsedSeconds: 2726
+                    },
+                    agentEffortEquivalentMinutes: null,
+                    timestampSourceId: 'handoff',
+                    outputEvidenceIds: []
+                },
+                {
+                    id: 'lpd-midnight',
+                    date: '2026-08-20',
+                    roleTask: 'Coder LPD',
+                    topicLabel: 'Prompt LPD',
+                    workPackageIds: ['lpd'],
+                    description: 'Foundation LPD consegnata oltre la mezzanotte.',
+                    status: 'complete',
+                    references: [
+                        { kind: 'issue', reference: '#196' },
+                        { kind: 'pr', reference: '#198' }
+                    ],
+                    timing: {
+                        kind: 'clock_interval',
+                        startAt: '2026-08-20T22:51:03+02:00',
+                        endAt: '2026-08-21T00:11:29+02:00',
+                        timeZone: 'Europe/Rome',
+                        actualClockElapsedSeconds: 4826
+                    },
+                    agentEffortEquivalentMinutes: null,
+                    timestampSourceId: 'handoff',
+                    outputEvidenceIds: []
+                },
+                {
+                    id: 'security-unplaced',
+                    date: '2026-08-21',
+                    roleTask: 'Tech Lead security',
+                    topicLabel: 'Issue security',
+                    workPackageIds: ['security'],
+                    description: 'Confine security definito.',
+                    status: 'complete',
+                    references: [{ kind: 'issue', reference: '#199' }],
+                    timing: { kind: 'unplaced_duration', attestedDurationSeconds: 600 },
+                    agentEffortEquivalentMinutes: null,
+                    timestampSourceId: 'handoff',
+                    outputEvidenceIds: []
+                },
+                {
+                    id: 'security-open',
+                    date: '2026-08-21',
+                    roleTask: 'Release Plan security',
+                    topicLabel: 'Piano security',
+                    workPackageIds: ['security'],
+                    description: 'Aggiornamento ancora in corso.',
+                    status: 'in_progress',
+                    references: [{ kind: 'issue', reference: '#199' }],
+                    timing: {
+                        kind: 'open_interval',
+                        startAt: '2026-08-21T17:06:48+02:00',
+                        timeZone: 'Europe/Rome'
+                    },
+                    agentEffortEquivalentMinutes: null,
+                    timestampSourceId: 'handoff',
+                    outputEvidenceIds: []
+                }
+            ]
+        },
+        scheduleReconciliation: {
+            forecastRule: 'Il previsto riduce il residuo; l’anticipo viene tolto dal futuro; l’aggiunta sposta ciò che segue.',
+            activities: [
+                {
+                    id: 'prompt-foundations',
+                    title: 'Attività aggiunta - Fondazioni prompt-as-code',
+                    kind: 'added_and_anticipated',
+                    color: '#7c3aed',
+                    status: 'config_gated',
+                    startDate: '2026-08-17',
+                    endDate: '2026-08-23',
+                    sourceModuleIds: [],
+                    sourceTopicIds: [],
+                    entryIds: ['assessment-one', 'lpd-midnight'],
+                    baselinePlannedMinutes: null,
+                    summary: 'Fondazioni assessment e LPD.',
+                    planImpact: 'Il residuo futuro è già stato ricalcolato.'
+                },
+                {
+                    id: 'security-added',
+                    title: 'Attività aggiunta - Sicurezza AI',
+                    kind: 'added',
+                    color: '#9f1239',
+                    status: 'in_progress',
+                    startDate: '2026-08-17',
+                    endDate: '2026-08-23',
+                    sourceModuleIds: [],
+                    sourceTopicIds: [],
+                    entryIds: ['security-unplaced', 'security-open'],
+                    baselinePlannedMinutes: null,
+                    summary: 'Definizione del confine security.',
+                    planImpact: 'Aggiunge nuovo residuo senza avanzamento automatico.'
+                }
+            ]
+        }
+    };
+
+    const presentation = buildWeeklyActualWorkPresentation(
+        plan,
+        '2026-08-17',
+        '2026-08-23'
+    );
+
+    assert.equal(presentation.empty, false);
+    assert.equal(presentation.displayMode, 'actual');
+    assert.equal(presentation.summary.dailyUnionText, '1 h 20 min 50 s');
+    assert.equal(presentation.summary.taskElapsedText, '2 h 15 min 52 s');
+    assert.equal(presentation.summary.unplacedText, '10 min');
+    assert.equal(presentation.summary.parallelismText, '1,56×');
+    assert.equal(presentation.summary.calendarOverlapText, '45 min 2 s');
+    assert.equal(presentation.summary.openEntryCount, 1);
+    assert.deepEqual(presentation.activities.map(activity => activity.title), [
+        'Attività aggiunta - Fondazioni prompt-as-code',
+        'Attività aggiunta - Sicurezza AI'
+    ]);
+    assert.match(presentation.activities[0].comparisonText, /non era presente/i);
+    assert.deepEqual(presentation.days.map(day => day.date), ['2026-08-20', '2026-08-21']);
+    assert.deepEqual(
+        presentation.days[0].groups.map(group => group.referenceText),
+        ['Issue #195 · PR #197', 'Issue #196 · PR #198']
+    );
+    assert.equal(presentation.days[0].groups[1].elapsedText, '1 h 8 min 57 s');
+    assert.equal(presentation.days[0].groups[1].activityTitle, 'Attività aggiunta - Fondazioni prompt-as-code');
+    assert.equal(presentation.days[0].groups[1].timingLines[0], '22:51–24:00');
+    assert.match(presentation.days[0].groups[1].intervals[0].timingText, /24:00:00.*quota del giorno/);
+    assert.equal(presentation.days[1].groups[0].elapsedText, '11 min 29 s');
+    assert.match(presentation.days[1].groups[0].intervals[0].timingText, /^00:00:00/);
+    assert.equal(presentation.days[1].groups[1].referenceText, 'Issue #199');
+    assert.match(presentation.replanning.text, /previsto riduce.*anticipo.*aggiunta sposta/i);
+
+    const future = buildWeeklyActualWorkPresentation(plan, '2026-08-24', '2026-08-30');
+    assert.equal(future.empty, true);
+    assert.equal(future.displayMode, 'forecast');
+    assert.deepEqual(future.days, []);
+    assert.match(future.emptyText, /non diventano appuntamenti inventati/i);
 });

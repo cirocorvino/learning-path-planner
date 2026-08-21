@@ -1,4 +1,9 @@
-import { DAY_KEYS, TOPIC_KINDS } from './model.js';
+import {
+    DAY_KEYS,
+    TOPIC_KINDS,
+    calculateActualEntriesMetrics,
+    calculateActualWorkMetrics
+} from './model.js';
 
 const DAY_BY_UTC_INDEX = [
     'sunday',
@@ -117,6 +122,24 @@ export function moduleEffectiveMinutes(module, multipliers = {}) {
     );
 }
 
+export function remainingTopicMinutes(topic, multipliers = {}, progress = {}) {
+    const effectiveMinutes = effectiveTopicMinutes(topic, multipliers);
+    const topicProgress = progress?.[topic.id];
+    if (topicProgress?.completed === true) return 0;
+    const multiplier = Number(multipliers[topic.kind]) || 1;
+    const completedMinutes = Math.max(0, Math.round(Number(topicProgress?.completedMinutes) || 0));
+    const effectiveCompletedMinutes = Math.round(completedMinutes * multiplier);
+    return Math.max(0, effectiveMinutes - effectiveCompletedMinutes);
+}
+
+export function moduleRemainingMinutes(module, multipliers = {}, progress = {}) {
+    if (module.mode === 'buffer') return 0;
+    return module.topics.reduce(
+        (total, topic) => total + remainingTopicMinutes(topic, multipliers, progress),
+        0
+    );
+}
+
 export function getWeeklyCapacity(database) {
     const abstractCapacity = abstractReleaseCapacity(database);
     if (abstractCapacity !== null) return abstractCapacity;
@@ -208,6 +231,68 @@ function allocateModuleWeeks(database, startDate, totalMinutes, warnings) {
     return capacities;
 }
 
+export function getActualWorkWeeks(database) {
+    const daily = calculateActualWorkMetrics(database.releasePlan).daily;
+    if (daily.length === 0) return [];
+    const planStart = parseIsoDate(database.plan.startDate);
+    const weeks = new Map();
+
+    daily.forEach(day => {
+        const dayOffset = daysBetween(database.plan.startDate, day.date);
+        const weekOffset = Math.floor(dayOffset / 7) * 7;
+        const weekStart = addDays(planStart, weekOffset);
+        const weekStartDate = toIsoDate(weekStart);
+        if (!weeks.has(weekStartDate)) {
+            weeks.set(weekStartDate, {
+                id: `actual-week-${weekStartDate}`,
+                startDate: weekStartDate,
+                endDate: toIsoDate(addDays(weekStart, 6)),
+                taskElapsedSeconds: 0,
+                dailyUnionElapsedSeconds: 0,
+                unplacedElapsedSeconds: 0,
+                openEntryCount: 0,
+                dayCount: 0
+            });
+        }
+        const week = weeks.get(weekStartDate);
+        week.taskElapsedSeconds += day.taskElapsedSeconds;
+        week.dailyUnionElapsedSeconds += day.dailyUnionElapsedSeconds;
+        week.unplacedElapsedSeconds += day.unplacedElapsedSeconds;
+        week.openEntryCount += day.openEntryCount;
+        week.dayCount += 1;
+    });
+
+    return [...weeks.values()].sort((left, right) => left.startDate.localeCompare(right.startDate));
+}
+
+export function getReconciledActualActivities(database) {
+    const reconciliation = database.releasePlan?.scheduleReconciliation;
+    const entries = database.releasePlan?.actualWorkLog?.entries || [];
+    if (!reconciliation) return [];
+    const entryById = new Map(entries.map(entry => [entry.id, entry]));
+    return reconciliation.activities.map(activity => {
+        const activityEntries = activity.entryIds
+            .map(entryId => entryById.get(entryId))
+            .filter(Boolean);
+        const metrics = calculateActualEntriesMetrics(activityEntries);
+        return {
+            ...activity,
+            entryCount: metrics.entryCount,
+            closedEntryCount: metrics.closedEntryCount,
+            openEntryCount: metrics.openEntryCount,
+            taskElapsedSeconds: metrics.taskElapsedSeconds,
+            dailyUnionElapsedSeconds: metrics.dailyUnionElapsedSeconds,
+            unplacedElapsedSeconds: metrics.attestedUnplacedSeconds
+        };
+    });
+}
+
+export function getForecastStartDate(database) {
+    const actualWeeks = getActualWorkWeeks(database);
+    if (actualWeeks.length === 0) return database.plan.startDate;
+    return toIsoDate(addDays(parseIsoDate(actualWeeks.at(-1).startDate), 7));
+}
+
 export function buildPlanSchedule(database) {
     const baseCapacityMinutes = getWeeklyCapacity(database);
     const requestedTargetMinutes = database.plan.weeklyTargetMinutes ?? baseCapacityMinutes;
@@ -222,9 +307,24 @@ export function buildPlanSchedule(database) {
         );
     }
 
-    let cursor = parseIsoDate(database.plan.startDate);
+    const actualWeeks = getActualWorkWeeks(database);
+    const actualActivities = getReconciledActualActivities(database);
+    const forecastStartDate = actualWeeks.length
+        ? toIsoDate(addDays(parseIsoDate(actualWeeks.at(-1).startDate), 7))
+        : database.plan.startDate;
+    let cursor = parseIsoDate(forecastStartDate);
     const modules = database.plan.modules.map(module => {
-        const totalMinutes = moduleEffectiveMinutes(module, database.settings.estimationMultipliers);
+        const originalTotalMinutes = moduleEffectiveMinutes(module, database.settings.estimationMultipliers);
+        const totalMinutes = moduleRemainingMinutes(
+            module,
+            database.settings.estimationMultipliers,
+            database.state.progress
+        );
+        const remainingTopicCount = module.topics.filter(topic => remainingTopicMinutes(
+            topic,
+            database.settings.estimationMultipliers,
+            database.state.progress
+        ) > 0).length;
         const start = new Date(cursor.getTime());
         const weekCapacities = module.mode === 'buffer'
             ? Array.from({ length: module.fixedWeeks }, () => 0)
@@ -239,7 +339,11 @@ export function buildPlanSchedule(database) {
 
         return {
             ...module,
+            originalTotalMinutes,
+            completedMinutes: originalTotalMinutes - totalMinutes,
             totalMinutes,
+            remainingTopicCount,
+            completedTopicCount: module.topics.length - remainingTopicCount,
             weeks,
             startDate: toIsoDate(start),
             endDate: toIsoDate(end),
@@ -260,7 +364,10 @@ export function buildPlanSchedule(database) {
         requestedTargetMinutes,
         effectiveWeeklyTargetMinutes: Math.min(requestedTargetMinutes, baseCapacityMinutes),
         startDate: database.plan.startDate,
+        forecastStartDate,
         endDate: lastScheduled?.endDate || database.plan.startDate,
+        actualWeeks,
+        actualActivities,
         warnings: [...new Set(warnings)]
     };
 }
@@ -280,7 +387,11 @@ export function getModuleWeekAllocations(database, moduleId, weekIndex) {
     const allocations = [];
 
     sourceModule.topics.forEach(topic => {
-        const topicMinutes = effectiveTopicMinutes(topic, database.settings.estimationMultipliers);
+        const topicMinutes = remainingTopicMinutes(
+            topic,
+            database.settings.estimationMultipliers,
+            database.state.progress
+        );
         const topicEnd = topicStart + topicMinutes;
         const overlapStart = Math.max(topicStart, startOffset);
         const overlapEnd = Math.min(topicEnd, endOffset);

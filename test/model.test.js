@@ -486,6 +486,50 @@ function actualWorkReleaseDatabase() {
     return database;
 }
 
+function reconciledActualWorkReleaseDatabase() {
+    const database = actualWorkReleaseDatabase();
+    database.releasePlan.scheduleReconciliation = {
+        version: 'activity-reconciliation-v1',
+        asOf: '2026-08-21',
+        requireCompleteMapping: true,
+        rule: 'Ogni intervallo appartiene a una sola attività del piano.',
+        forecastRule: 'Previsto, anticipato e aggiunto modificano il residuo in modo diverso.',
+        activities: [
+            {
+                id: 'planned-foundation',
+                title: 'Onda 1 - Foundation',
+                kind: 'planned',
+                color: '#0f766e',
+                status: 'partial',
+                startDate: '2026-08-17',
+                endDate: '2026-08-23',
+                sourceModuleIds: [database.plan.modules[0].id],
+                sourceTopicIds: ['goals'],
+                entryIds: ['actual-a', 'actual-b'],
+                baselinePlannedMinutes: 480,
+                summary: 'Parte prevista completata.',
+                planImpact: 'Il residuo prosegue nella settimana successiva.'
+            },
+            {
+                id: 'added-planning',
+                title: 'Attività aggiunta - Piano',
+                kind: 'added',
+                color: '#4f46e5',
+                status: 'in_progress',
+                startDate: '2026-08-17',
+                endDate: '2026-08-23',
+                sourceModuleIds: [],
+                sourceTopicIds: [],
+                entryIds: ['actual-unplaced', 'actual-open'],
+                baselinePlannedMinutes: null,
+                summary: 'Lavoro non presente nella baseline.',
+                planImpact: 'Occupa capacità ma non aumenta automaticamente la percentuale funzionale.'
+            }
+        ]
+    };
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -635,6 +679,10 @@ test('normalizza il registro v5 e separa somma task, unione giornaliera ed effor
         ['2026-08-20', 6863, 4161],
         ['2026-08-21', 1289, 689]
     ]);
+    assert.deepEqual(metrics.daily.map(day => day.entryElapsedSeconds), [
+        { 'actual-a': 2726, 'actual-b': 4137 },
+        { 'actual-b': 689, 'actual-unplaced': 600, 'actual-open': 0 }
+    ]);
 });
 
 test('mantiene stabile il round-trip del release plan v5', () => {
@@ -642,6 +690,26 @@ test('mantiene stabile il round-trip del release plan v5', () => {
     const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
 
     assert.deepEqual(second, first);
+});
+
+test('normalizza la riconciliazione attività-piano e conserva un mapping completo', () => {
+    const first = normalizeDatabase(reconciledActualWorkReleaseDatabase()).database;
+    const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
+
+    assert.equal(first.releasePlan.scheduleReconciliation.activities.length, 2);
+    assert.equal(first.releasePlan.scheduleReconciliation.activities[0].kind, 'planned');
+    assert.equal(first.releasePlan.scheduleReconciliation.activities[1].baselinePlannedMinutes, null);
+    assert.deepEqual(second, first);
+});
+
+test('rifiuta attività attestate duplicate o non classificate nella riconciliazione', () => {
+    const duplicate = reconciledActualWorkReleaseDatabase();
+    duplicate.releasePlan.scheduleReconciliation.activities[1].entryIds.push('actual-a');
+    assert.throws(() => normalizeDatabase(duplicate), /assegna più volte/i);
+
+    const unmapped = reconciledActualWorkReleaseDatabase();
+    unmapped.releasePlan.scheduleReconciliation.activities[1].entryIds = ['actual-open'];
+    assert.throws(() => normalizeDatabase(unmapped), /non classifica tutte/i);
 });
 
 test('rifiuta durate, fonti e intervalli aperti inventati nel registro v5', () => {

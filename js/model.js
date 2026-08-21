@@ -9,6 +9,7 @@ const RELEASE_SCHEDULE_MODES = ['clock_slots', 'abstract_weekly_capacity'];
 const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
 const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
 const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
+const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
 const DELIVERY_DEPENDENCY_TYPES = [
     'required_before_start',
     'overlap_after_design',
@@ -686,6 +687,96 @@ function normalizeActualWorkLog(input, path, topicIds, workPackageIds) {
     };
 }
 
+function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds) {
+    const source = requireObject(input, path);
+    const mappedEntryIds = new Set();
+    const activities = requireArray(source.activities, `${path}.activities`).map((activity, index) => {
+        const itemPath = `${path}.activities[${index}]`;
+        requireObject(activity, itemPath);
+        const kind = requiredString(activity.kind, `${itemPath}.kind`, 40);
+        if (!SCHEDULE_RECONCILIATION_KINDS.includes(kind)) {
+            throw new Error(`${itemPath}.kind non è supportato.`);
+        }
+        const startDate = validDate(activity.startDate, `${itemPath}.startDate`);
+        const endDate = validDate(activity.endDate, `${itemPath}.endDate`);
+        if (Date.parse(`${endDate}T00:00:00Z`) < Date.parse(`${startDate}T00:00:00Z`)) {
+            throw new Error(`${itemPath}.endDate precede startDate.`);
+        }
+        const sourceModuleIds = normalizeStringList(
+            activity.sourceModuleIds,
+            `${itemPath}.sourceModuleIds`,
+            120
+        ).map((moduleId, moduleIndex) => validId(
+            moduleId,
+            `${itemPath}.sourceModuleIds[${moduleIndex}]`
+        ));
+        sourceModuleIds.forEach(moduleId => {
+            if (!moduleIds.has(moduleId)) {
+                throw new Error(`${itemPath}.sourceModuleIds contiene il modulo sconosciuto ${moduleId}.`);
+            }
+        });
+        const sourceTopicIds = normalizeStringList(
+            activity.sourceTopicIds,
+            `${itemPath}.sourceTopicIds`,
+            120
+        ).map((topicId, topicIndex) => validId(
+            topicId,
+            `${itemPath}.sourceTopicIds[${topicIndex}]`
+        ));
+        sourceTopicIds.forEach(topicId => {
+            if (!topicIds.has(topicId)) {
+                throw new Error(`${itemPath}.sourceTopicIds contiene l'argomento sconosciuto ${topicId}.`);
+            }
+        });
+        const entryIds = normalizeStringList(activity.entryIds, `${itemPath}.entryIds`, 120)
+            .map((entryId, entryIndex) => validId(entryId, `${itemPath}.entryIds[${entryIndex}]`));
+        if (entryIds.length === 0) {
+            throw new Error(`${itemPath}.entryIds non può essere vuoto.`);
+        }
+        entryIds.forEach(entryId => {
+            if (!actualEntryIds.has(entryId)) {
+                throw new Error(`${itemPath}.entryIds contiene l'attività attestata sconosciuta ${entryId}.`);
+            }
+            if (mappedEntryIds.has(entryId)) {
+                throw new Error(`${itemPath}.entryIds assegna più volte l'attività attestata ${entryId}.`);
+            }
+            mappedEntryIds.add(entryId);
+        });
+        return {
+            id: validId(activity.id, `${itemPath}.id`),
+            title: requiredString(activity.title, `${itemPath}.title`, 300),
+            kind,
+            color: validColor(activity.color, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
+            status: validStatus(activity.status, `${itemPath}.status`),
+            startDate,
+            endDate,
+            sourceModuleIds,
+            sourceTopicIds,
+            entryIds,
+            baselinePlannedMinutes: finitePositive(
+                activity.baselinePlannedMinutes,
+                `${itemPath}.baselinePlannedMinutes`,
+                { integer: true, allowNull: true }
+            ),
+            summary: requiredString(activity.summary, `${itemPath}.summary`, 1200),
+            planImpact: requiredString(activity.planImpact, `${itemPath}.planImpact`, 1500)
+        };
+    });
+    uniqueIds(activities, `${path}.activities`);
+    if (source.requireCompleteMapping === true && mappedEntryIds.size !== actualEntryIds.size) {
+        const unmapped = [...actualEntryIds].filter(entryId => !mappedEntryIds.has(entryId));
+        throw new Error(`${path}.activities non classifica tutte le attività attestate: ${unmapped.join(', ')}.`);
+    }
+    return {
+        version: requiredString(source.version, `${path}.version`, 120),
+        asOf: validDate(source.asOf, `${path}.asOf`),
+        requireCompleteMapping: source.requireCompleteMapping === true,
+        rule: requiredString(source.rule, `${path}.rule`, 1500),
+        forecastRule: requiredString(source.forecastRule, `${path}.forecastRule`, 1500),
+        activities
+    };
+}
+
 function normalizeExternalLeadTimes(input, path) {
     return (Array.isArray(input) ? input : []).map((leadTime, index) => {
         const itemPath = `${path}[${index}]`;
@@ -1060,10 +1151,8 @@ function mergedIntervalSeconds(intervals) {
     return currentStart === null ? 0 : total + currentEnd - currentStart;
 }
 
-export function calculateActualWorkMetrics(releasePlan) {
-    const entries = Array.isArray(releasePlan?.actualWorkLog?.entries)
-        ? releasePlan.actualWorkLog.entries
-        : [];
+export function calculateActualEntriesMetrics(entriesInput) {
+    const entries = Array.isArray(entriesInput) ? entriesInput : [];
     const days = new Map();
     const referenceTotals = new Map();
     const workPackageTotals = new Map();
@@ -1077,6 +1166,7 @@ export function calculateActualWorkMetrics(releasePlan) {
             days.set(date, {
                 date,
                 entries: [],
+                entryElapsedSeconds: new Map(),
                 clockIntervals: [],
                 taskElapsedSeconds: 0,
                 unplacedElapsedSeconds: 0,
@@ -1084,6 +1174,14 @@ export function calculateActualWorkMetrics(releasePlan) {
             });
         }
         return days.get(date);
+    }
+
+    function addDayEntry(day, entry, elapsedSeconds) {
+        day.entryElapsedSeconds.set(
+            entry.id,
+            (day.entryElapsedSeconds.get(entry.id) || 0) + elapsedSeconds
+        );
+        if (!day.entries.includes(entry)) day.entries.push(entry);
     }
 
     function addGroupedTotal(map, key, data, elapsedSeconds, entryId) {
@@ -1126,18 +1224,18 @@ export function calculateActualWorkMetrics(releasePlan) {
                 const day = dayFor(segment.date);
                 day.clockIntervals.push(segment);
                 day.taskElapsedSeconds += segment.elapsedSeconds;
-                if (!day.entries.includes(entry)) day.entries.push(entry);
+                addDayEntry(day, entry, segment.elapsedSeconds);
             });
         } else if (timing.kind === 'unplaced_duration') {
             attestedUnplacedSeconds += elapsedSeconds;
             const day = dayFor(entry.date);
             day.taskElapsedSeconds += elapsedSeconds;
             day.unplacedElapsedSeconds += elapsedSeconds;
-            day.entries.push(entry);
+            addDayEntry(day, entry, elapsedSeconds);
         } else {
             const day = dayFor(entry.date);
             day.openEntryCount += 1;
-            day.entries.push(entry);
+            addDayEntry(day, entry, 0);
         }
     });
 
@@ -1150,6 +1248,7 @@ export function calculateActualWorkMetrics(releasePlan) {
                 const rightStart = right.timing.startAt || `${right.date}T23:59:59Z`;
                 return leftStart.localeCompare(rightStart);
             }),
+            entryElapsedSeconds: Object.fromEntries(day.entryElapsedSeconds),
             taskElapsedSeconds: day.taskElapsedSeconds,
             dailyUnionElapsedSeconds: mergedIntervalSeconds(day.clockIntervals),
             unplacedElapsedSeconds: day.unplacedElapsedSeconds,
@@ -1170,6 +1269,10 @@ export function calculateActualWorkMetrics(releasePlan) {
         referenceTotals: [...referenceTotals.values()],
         workPackageTotals: [...workPackageTotals.values()]
     };
+}
+
+export function calculateActualWorkMetrics(releasePlan) {
+    return calculateActualEntriesMetrics(releasePlan?.actualWorkLog?.entries);
 }
 
 export function calculateReleaseScopeMetrics(releasePlan, scopeId) {
@@ -1303,7 +1406,7 @@ export function summarizeScopeGateReadiness(releasePlan, scopeId) {
     };
 }
 
-function normalizeReleasePlan(input, topicIds) {
+function normalizeReleasePlan(input, topicIds, moduleIds) {
     const source = requireObject(input, 'releasePlan');
     const releasePlanSchemaVersion = Number(source.schemaVersion);
     if (!SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS.includes(releasePlanSchemaVersion)) {
@@ -1422,6 +1525,7 @@ function normalizeReleasePlan(input, topicIds) {
         ? normalizeAbsoluteWeightModel(source.absoluteWeightModel, 'releasePlan.absoluteWeightModel')
         : null;
     let actualWorkLog = null;
+    let scheduleReconciliation = null;
 
     const scopes = requireArray(source.scopes, 'releasePlan.scopes').map((scope, index) => {
         const path = `releasePlan.scopes[${index}]`;
@@ -1592,6 +1696,15 @@ function normalizeReleasePlan(input, topicIds) {
             topicIds,
             workPackageIds
         );
+        if (source.scheduleReconciliation) {
+            scheduleReconciliation = normalizeScheduleReconciliation(
+                source.scheduleReconciliation,
+                'releasePlan.scheduleReconciliation',
+                moduleIds,
+                topicIds,
+                new Set(actualWorkLog.entries.map(entry => entry.id))
+            );
+        }
     }
 
     if (hasAbsoluteFunctionalWeights) {
@@ -1897,6 +2010,7 @@ function normalizeReleasePlan(input, topicIds) {
         ...(hasMetricSemantics ? { metricSemantics } : {}),
         ...(hasAbsoluteFunctionalWeights ? { absoluteWeightModel } : {}),
         ...(hasAttestedActualWork ? { actualWorkLog } : {}),
+        ...(scheduleReconciliation ? { scheduleReconciliation } : {}),
         ...(hasAdaptiveDelivery ? { releaseStatus, deliveryModel, deliveryTotals, scheduleScope } : {}),
         workPackages,
         gates,
@@ -1954,7 +2068,11 @@ function normalizeV2Database(input) {
         }
     };
     if (source.releasePlan) {
-        normalized.releasePlan = normalizeReleasePlan(source.releasePlan, topicIds);
+        normalized.releasePlan = normalizeReleasePlan(
+            source.releasePlan,
+            topicIds,
+            new Set(plan.modules.map(module => module.id))
+        );
     }
     return normalized;
 }

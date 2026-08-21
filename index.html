@@ -82,36 +82,36 @@
             <section id="releaseMetricSemantics" class="release-metric-semantics hidden"
                 aria-label="Come leggere le metriche del rilascio"></section>
 
-            <section id="releaseStatusPanel" class="release-panel release-panel--wide release-state-summary hidden"
-                aria-labelledby="releaseStateTitle">
-                <div class="release-panel__heading">
+            <details id="releaseStatusPanel" class="release-panel release-panel--wide release-state-summary hidden"
+                aria-labelledby="releaseStateTitle" open>
+                <summary class="release-panel__heading release-panel__summary">
                     <h3 id="releaseStateTitle">Che cosa significa oggi</h3>
                     <span id="releaseDeliveryTotals" class="release-state-summary__totals"></span>
-                </div>
+                </summary>
                 <p id="releaseStatusHeadline" class="release-state-summary__headline"></p>
                 <p id="releaseFunctionalNote" class="muted"></p>
                 <div id="releaseStatusDetails" class="release-state-summary__grid"></div>
                 <p id="releaseNextStep" class="release-state-summary__next"></p>
-            </section>
+            </details>
 
             <div class="release-dashboard__grid">
-                <section class="release-panel" aria-labelledby="criticalPathTitle">
-                    <h3 id="criticalPathTitle">Percorso critico</h3>
+                <details class="release-panel" aria-labelledby="criticalPathTitle" open>
+                    <summary class="release-panel__summary"><h3 id="criticalPathTitle">Percorso critico</h3></summary>
                     <p id="releaseCriticalSummary" class="muted"></p>
                     <ol id="releaseCriticalPath" class="critical-path"></ol>
                     <div id="releaseCriticalBranches" class="critical-branches"></div>
-                </section>
-                <section class="release-panel" aria-labelledby="forecastTitle">
-                    <h3 id="forecastTitle">Previsioni</h3>
+                </details>
+                <details class="release-panel" aria-labelledby="forecastTitle" open>
+                    <summary class="release-panel__summary"><h3 id="forecastTitle">Previsioni</h3></summary>
                     <div id="releaseForecasts" class="forecast-list"></div>
-                </section>
+                </details>
             </div>
 
-            <section class="release-panel release-panel--wide" aria-labelledby="workPackagesTitle">
-                <div class="release-panel__heading">
+            <details class="release-panel release-panel--wide" aria-labelledby="workPackagesTitle">
+                <summary class="release-panel__heading release-panel__summary">
                     <h3 id="workPackagesTitle">Work package</h3>
                     <span class="muted">Un peso funzionale comune; gli scope cambiano per membership</span>
-                </div>
+                </summary>
                 <div class="release-table-wrap">
                     <table class="release-table">
                         <thead>
@@ -126,16 +126,16 @@
                         <tbody id="releaseWorkPackages"></tbody>
                     </table>
                 </div>
-            </section>
+            </details>
 
-            <section id="releaseActualWorkPanel" class="release-panel release-panel--wide hidden"
-                aria-labelledby="releaseActualWorkTitle">
-                <div class="release-panel__heading">
+            <details id="releaseActualWorkPanel" class="release-panel release-panel--wide hidden"
+                aria-labelledby="releaseActualWorkTitle" open>
+                <summary class="release-panel__heading release-panel__summary">
                     <div>
                         <h3 id="releaseActualWorkTitle">Consuntivo attestato</h3>
                         <p id="releaseActualCoverage" class="muted"></p>
                     </div>
-                </div>
+                </summary>
                 <div id="releaseActualSemantics" class="release-actual-semantics"></div>
                 <div id="releaseActualSummary" class="release-actual-summary"></div>
                 <div id="releaseActualDays" class="release-actual-days"></div>
@@ -143,23 +143,23 @@
                     <summary>Totali per issue, PR e work package</summary>
                     <div id="releaseActualTotalsContent"></div>
                 </details>
-            </section>
+            </details>
 
             <div class="release-dashboard__grid">
-                <section class="release-panel" aria-labelledby="gatesTitle">
-                    <h3 id="gatesTitle">Gate</h3>
+                <details class="release-panel" aria-labelledby="gatesTitle">
+                    <summary class="release-panel__summary"><h3 id="gatesTitle">Gate</h3></summary>
                     <div id="releaseGates" class="gate-list"></div>
-                </section>
-                <section class="release-panel" aria-labelledby="milestonesTitle">
-                    <h3 id="milestonesTitle">Milestone</h3>
+                </details>
+                <details class="release-panel" aria-labelledby="milestonesTitle">
+                    <summary class="release-panel__summary"><h3 id="milestonesTitle">Milestone</h3></summary>
                     <div id="releaseMilestones" class="milestone-list"></div>
-                </section>
+                </details>
             </div>
 
-            <section class="release-panel release-panel--wide" aria-labelledby="releaseHistoryTitle">
-                <h3 id="releaseHistoryTitle">Storico e variazioni di perimetro</h3>
+            <details class="release-panel release-panel--wide" aria-labelledby="releaseHistoryTitle">
+                <summary class="release-panel__summary"><h3 id="releaseHistoryTitle">Storico e variazioni di perimetro</h3></summary>
                 <div id="releaseHistory" class="release-history"></div>
-            </section>
+            </details>
         </section>
 
         <section class="card gantt-card" aria-labelledby="ganttTitle">
