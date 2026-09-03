@@ -15,6 +15,14 @@
         const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
         const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
         const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
+        const VERIFIED_OUTPUT_EVIDENCE_STATUSES = new Set([
+            'closed',
+            'complete',
+            'completed',
+            'merged',
+            'passed',
+            'reconciled'
+        ]);
         const DELIVERY_DEPENDENCY_TYPES = [
             'required_before_start',
             'overlap_after_design',
@@ -290,6 +298,23 @@
                 }
                 ids.add(item.id);
             });
+        }
+
+        function summarizeReconciliationEvidence(releasePlan, activity) {
+            const evidenceById = new Map(
+                (releasePlan?.actualWorkLog?.outputEvidence || []).map(item => [item.id, item])
+            );
+            const evidenceIds = activity?.verificationEvidenceIds || [];
+            const evidence = evidenceIds.map(evidenceId => evidenceById.get(evidenceId)).filter(Boolean);
+            const verified = activity?.status === 'complete'
+                && evidenceIds.length > 0
+                && evidence.length === evidenceIds.length
+                && evidence.every(item => VERIFIED_OUTPUT_EVIDENCE_STATUSES.has(String(item.status).toLowerCase()));
+            return {
+                verified,
+                label: verified ? 'Evidenza verificata' : 'Evidenza non verificata',
+                evidence
+            };
         }
 
         function normalizeLocale(locale) {
@@ -692,7 +717,7 @@
             };
         }
 
-        function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds) {
+        function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds, outputEvidenceIds) {
             const source = requireObject(input, path);
             const mappedEntryIds = new Set();
             const activities = requireArray(source.activities, `${path}.activities`).map((activity, index) => {
@@ -747,6 +772,19 @@
                     }
                     mappedEntryIds.add(entryId);
                 });
+                const verificationEvidenceIds = normalizeStringList(
+                    activity.verificationEvidenceIds,
+                    `${itemPath}.verificationEvidenceIds`,
+                    120
+                ).map((evidenceId, evidenceIndex) => validId(
+                    evidenceId,
+                    `${itemPath}.verificationEvidenceIds[${evidenceIndex}]`
+                ));
+                verificationEvidenceIds.forEach(evidenceId => {
+                    if (!outputEvidenceIds.has(evidenceId)) {
+                        throw new Error(`${itemPath}.verificationEvidenceIds contiene l'evidenza sconosciuta ${evidenceId}.`);
+                    }
+                });
                 return {
                     id: validId(activity.id, `${itemPath}.id`),
                     title: requiredString(activity.title, `${itemPath}.title`, 300),
@@ -758,6 +796,7 @@
                     sourceModuleIds,
                     sourceTopicIds,
                     entryIds,
+                    verificationEvidenceIds,
                     baselinePlannedMinutes: finitePositive(
                         activity.baselinePlannedMinutes,
                         `${itemPath}.baselinePlannedMinutes`,
@@ -1707,7 +1746,8 @@
                         'releasePlan.scheduleReconciliation',
                         moduleIds,
                         topicIds,
-                        new Set(actualWorkLog.entries.map(entry => entry.id))
+                        new Set(actualWorkLog.entries.map(entry => entry.id)),
+                        new Set(actualWorkLog.outputEvidence.map(evidence => evidence.id))
                     );
                 }
             }
@@ -2299,11 +2339,11 @@
             });
         }
 
-        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateActualEntriesMetrics, calculateActualWorkMetrics, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
+        return { DATABASE_KIND, PLAN_KIND, SCHEMA_VERSION, RELEASE_DATABASE_SCHEMA_VERSION, RELEASE_PLAN_SCHEMA_VERSION, RELEASE_STATUSES, RELEASE_READINESS_STATUSES, DAY_KEYS, TOPIC_KINDS, CATEGORY_ROLES, MODULE_MODES, createId, createEmptyWeekTemplate, createEmptyDatabase, databaseHasContent, calculateActualEntriesMetrics, calculateActualWorkMetrics, calculateReleaseScopeMetrics, calculateReleaseScopeProgress, releaseScopeInversionContributors, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeReconciliationEvidence, summarizeScopeGateReadiness, normalizeDatabase, normalizePlanInput, updateDatabase, snapshotDatabase, replacePlan };
     })();
 
     const plannerApi = (() => {
-        const { DAY_KEYS, TOPIC_KINDS, calculateActualEntriesMetrics, calculateActualWorkMetrics } = modelApi;
+        const { DAY_KEYS, TOPIC_KINDS, calculateActualEntriesMetrics, calculateActualWorkMetrics, summarizeReconciliationEvidence } = modelApi;
 
         const DAY_BY_UTC_INDEX = [
             'sunday',
@@ -2575,8 +2615,11 @@
                     .map(entryId => entryById.get(entryId))
                     .filter(Boolean);
                 const metrics = calculateActualEntriesMetrics(activityEntries);
+                const evidence = summarizeReconciliationEvidence(database.releasePlan, activity);
                 return {
                     ...activity,
+                    evidenceVerified: evidence.verified,
+                    evidenceLabel: evidence.label,
                     entryCount: metrics.entryCount,
                     closedEntryCount: metrics.closedEntryCount,
                     openEntryCount: metrics.openEntryCount,
@@ -2585,6 +2628,10 @@
                     unplacedElapsedSeconds: metrics.attestedUnplacedSeconds
                 };
             });
+        }
+
+        function getVisibleGanttModules(schedule) {
+            return (schedule?.modules || []).filter(module => module.weeks > 0);
         }
 
         function getForecastStartDate(database) {
@@ -2794,11 +2841,11 @@
             }).format(date);
         }
 
-        return { parseIsoDate, toIsoDate, addDays, daysBetween, getTimelineMonths, minutesBetween, effectiveTopicMinutes, moduleEffectiveMinutes, remainingTopicMinutes, moduleRemainingMinutes, getWeeklyCapacity, getWeekTemplateForStart, getWeekCapacity, buildPlanSchedule, getActualWorkWeeks, getReconciledActualActivities, getForecastStartDate, getModuleWeekAllocations, getWeekAgenda, formatDuration, formatDate, formatDayName };
+        return { parseIsoDate, toIsoDate, addDays, daysBetween, getTimelineMonths, minutesBetween, effectiveTopicMinutes, moduleEffectiveMinutes, remainingTopicMinutes, moduleRemainingMinutes, getWeeklyCapacity, getWeekTemplateForStart, getWeekCapacity, buildPlanSchedule, getActualWorkWeeks, getReconciledActualActivities, getVisibleGanttModules, getForecastStartDate, getModuleWeekAllocations, getWeekAgenda, formatDuration, formatDate, formatDayName };
     })();
 
     const releasePresentationApi = (() => {
-        const { calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;
+        const { calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeReconciliationEvidence } = modelApi;
         const { formatDate, formatDayName, formatDuration, parseIsoDate } = plannerApi;
 
         function contributorViewModel(workPackage, locale) {
@@ -3056,6 +3103,7 @@
             return reconciliation.activities.map(activity => {
                 const entries = activity.entryIds.map(entryId => entryById.get(entryId)).filter(Boolean);
                 const metrics = calculateActualEntriesMetrics(entries);
+                const evidence = summarizeReconciliationEvidence(releasePlan, activity);
                 const plannedSeconds = activity.baselinePlannedMinutes === null
                     ? null
                     : activity.baselinePlannedMinutes * 60;
@@ -3070,6 +3118,9 @@
                 }
                 return {
                     ...activity,
+                    evidenceVerified: evidence.verified,
+                    evidenceLabel: evidence.label,
+                    verificationEvidence: evidence.evidence,
                     kindLabel: RECONCILIATION_KIND_LABELS[activity.kind] || activity.kind,
                     taskElapsedSeconds: metrics.taskElapsedSeconds,
                     taskElapsedText: formatElapsedSeconds(metrics.taskElapsedSeconds),
@@ -4011,7 +4062,7 @@
 
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
-        const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;
+        const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getVisibleGanttModules, getWeekAgenda } = plannerApi;
         const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
@@ -4819,10 +4870,20 @@
             }[kind] || 'Attività svolta';
         }
 
+        function reconciliationEvidenceBadge(activity) {
+            return createElement('span', {
+                className: `release-evidence-badge${activity.evidenceVerified ? ' release-evidence-badge--verified' : ''}`,
+                text: `${activity.evidenceVerified ? '✓ ' : ''}${activity.evidenceLabel}`,
+                title: activity.evidenceVerified
+                    ? 'Attività conclusa con evidenze finali collegate e verificate.'
+                    : 'Manca una prova finale chiusa oppure l’attività non è ancora conclusa.'
+            });
+        }
+
         function renderGantt() {
             clear(elements.ganttRows);
-            const modules = currentSchedule.modules;
-            const empty = modules.length === 0;
+            const modules = getVisibleGanttModules(currentSchedule);
+            const empty = modules.length === 0 && currentSchedule.actualActivities.length === 0;
             setHidden(elements.ganttEmpty, !empty);
             setHidden(elements.ganttTable, empty);
             if (empty) return;
@@ -4863,7 +4924,10 @@
                     attributes: { role: 'row' }
                 }, [
                     createElement('div', { attributes: { role: 'cell' } }, [
-                        createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                        createElement('div', { className: 'gantt__actual-title' }, [
+                            createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                            reconciliationEvidenceBadge(activity)
+                        ]),
                         createElement('span', {
                             className: 'gantt__module-meta',
                             text: `${reconciliationKindLabel(activity.kind)} · ${activity.closedEntryCount} intervalli conclusi${activity.openEntryCount ? ` · ${activity.openEntryCount} in corso` : ''}`
@@ -5266,6 +5330,7 @@
                 }, [
                     createElement('strong', { text: activity.title }),
                     createElement('span', { className: 'weekly-actual-activity__kind', text: activity.kindLabel }),
+                    reconciliationEvidenceBadge(activity),
                     createElement('span', {
                         className: 'allocation-pill__hours',
                         text: `Task attestati: ${activity.taskElapsedText} · tempo coperto: ${activity.dailyUnionText}`

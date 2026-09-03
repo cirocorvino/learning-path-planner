@@ -2,7 +2,8 @@ import {
     DAY_KEYS,
     TOPIC_KINDS,
     calculateActualEntriesMetrics,
-    calculateActualWorkMetrics
+    calculateActualWorkMetrics,
+    summarizeReconciliationEvidence
 } from './model.js';
 
 const DAY_BY_UTC_INDEX = [
@@ -275,8 +276,11 @@ export function getReconciledActualActivities(database) {
             .map(entryId => entryById.get(entryId))
             .filter(Boolean);
         const metrics = calculateActualEntriesMetrics(activityEntries);
+        const evidence = summarizeReconciliationEvidence(database.releasePlan, activity);
         return {
             ...activity,
+            evidenceVerified: evidence.verified,
+            evidenceLabel: evidence.label,
             entryCount: metrics.entryCount,
             closedEntryCount: metrics.closedEntryCount,
             openEntryCount: metrics.openEntryCount,
@@ -285,6 +289,10 @@ export function getReconciledActualActivities(database) {
             unplacedElapsedSeconds: metrics.attestedUnplacedSeconds
         };
     });
+}
+
+export function getVisibleGanttModules(schedule) {
+    return (schedule?.modules || []).filter(module => module.weeks > 0);
 }
 
 export function getForecastStartDate(database) {

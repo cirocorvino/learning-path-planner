@@ -26,10 +26,11 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
     assert.match(bundle, /calculateReleaseScopeMetrics/);
     assert.match(bundle, /releaseScopeInversionContributors/);
     assert.match(bundle, /summarizeScopeGateReadiness/);
+    assert.match(bundle, /summarizeReconciliationEvidence/);
     assert.match(bundle, /calculateActualWorkMetrics/);
     assert.match(
         bundle,
-        /const \{ calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot \} = modelApi;/
+        /const \{ calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeReconciliationEvidence \} = modelApi;/
     );
     assert.match(bundle, /buildActualWorkLogPresentation/);
     assert.match(bundle, /buildWeeklyActualWorkPresentation/);
@@ -38,6 +39,7 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
         /const \{ buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds \} = releasePresentationApi;/
     );
     assert.match(bundle, /currentSchedule\.actualActivities\.forEach/);
+    assert.match(bundle, /getVisibleGanttModules\(currentSchedule\)/);
     assert.match(bundle, /className: 'actual-agenda'/);
     assert.doesNotMatch(bundle, /Consuntivo attestato · settimana/);
     assert.match(bundle, /releaseActualWorkPanel/);

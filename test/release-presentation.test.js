@@ -326,3 +326,71 @@ test('presenta nella settimana solo attività attestate, raggruppate per issue e
     assert.deepEqual(future.days, []);
     assert.match(future.emptyText, /non diventano appuntamenti inventati/i);
 });
+
+test('espone il badge di verifica solo per attività concluse con evidenze finali', () => {
+    const plan = {
+        workPackages: [],
+        actualWorkLog: {
+            entryRule: 'Solo dati attestati.',
+            coverageNote: 'Copertura task Codex.',
+            semantics: {
+                agenticEffort: 'Separato.',
+                humanLeadTime: 'Separato.',
+                observedClock: 'Intervallo osservato.'
+            },
+            sources: [{ id: 'handoff', reference: 'Handoff TL', summary: 'Timestamp attestati.' }],
+            outputEvidence: [{
+                id: 'pr-205',
+                reference: 'PR #205',
+                status: 'merged',
+                publishedAt: '2026-08-22T12:47:13+02:00',
+                finalizedAt: '2026-08-22T15:30:00+02:00',
+                summary: 'PR integrata.'
+            }],
+            entries: [{
+                id: 'architecture-entry',
+                date: '2026-08-22',
+                roleTask: 'Coder',
+                topicLabel: 'Chiusura architettura',
+                workPackageIds: [],
+                description: 'Rimozione legacy completata.',
+                status: 'complete',
+                references: [{ kind: 'pr', reference: '#205' }],
+                timing: {
+                    kind: 'clock_interval',
+                    startAt: '2026-08-22T12:24:35+02:00',
+                    endAt: '2026-08-22T13:03:21+02:00',
+                    timeZone: 'Europe/Rome',
+                    actualClockElapsedSeconds: 2326
+                },
+                agentEffortEquivalentMinutes: null,
+                timestampSourceId: 'handoff',
+                outputEvidenceIds: ['pr-205']
+            }]
+        },
+        scheduleReconciliation: {
+            forecastRule: 'Il consuntivo aggiorna il residuo.',
+            activities: [{
+                id: 'architecture-close',
+                title: 'Chiusura architettura',
+                kind: 'planned',
+                color: '#0f766e',
+                status: 'complete',
+                startDate: '2026-08-22',
+                endDate: '2026-08-22',
+                sourceModuleIds: [],
+                sourceTopicIds: [],
+                entryIds: ['architecture-entry'],
+                verificationEvidenceIds: ['pr-205'],
+                baselinePlannedMinutes: 60,
+                summary: 'Attività conclusa.',
+                planImpact: 'Residuo aggiornato.'
+            }]
+        }
+    };
+
+    const presentation = buildWeeklyActualWorkPresentation(plan, '2026-08-17', '2026-08-23');
+    assert.equal(presentation.activities[0].evidenceVerified, true);
+    assert.equal(presentation.activities[0].evidenceLabel, 'Evidenza verificata');
+    assert.deepEqual(presentation.activities[0].verificationEvidence.map(item => item.id), ['pr-205']);
+});

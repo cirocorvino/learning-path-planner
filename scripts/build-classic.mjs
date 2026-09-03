@@ -33,6 +33,7 @@ const modules = [
             'releaseScopeInversionContributors',
             'releaseWorkPackagesForTopic',
             'summarizeModuleWorkPackageSnapshot',
+            'summarizeReconciliationEvidence',
             'summarizeScopeGateReadiness',
             'normalizeDatabase',
             'normalizePlanInput',
@@ -44,7 +45,7 @@ const modules = [
     {
         name: 'plannerApi',
         file: 'js/planner.js',
-        prelude: 'const { DAY_KEYS, TOPIC_KINDS, calculateActualEntriesMetrics, calculateActualWorkMetrics } = modelApi;',
+        prelude: 'const { DAY_KEYS, TOPIC_KINDS, calculateActualEntriesMetrics, calculateActualWorkMetrics, summarizeReconciliationEvidence } = modelApi;',
         exports: [
             'parseIsoDate',
             'toIsoDate',
@@ -62,6 +63,7 @@ const modules = [
             'buildPlanSchedule',
             'getActualWorkWeeks',
             'getReconciledActualActivities',
+            'getVisibleGanttModules',
             'getForecastStartDate',
             'getModuleWeekAllocations',
             'getWeekAgenda',
@@ -74,7 +76,7 @@ const modules = [
         name: 'releasePresentationApi',
         file: 'js/release-presentation.js',
         prelude: [
-            'const { calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot } = modelApi;',
+            'const { calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeReconciliationEvidence } = modelApi;',
             'const { formatDate, formatDayName, formatDuration, parseIsoDate } = plannerApi;'
         ].join('\n'),
         exports: [
@@ -136,7 +138,7 @@ const modules = [
         file: 'js/app.js',
         prelude: [
             'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;',
-            'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getWeekAgenda } = plannerApi;',
+            'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getVisibleGanttModules, getWeekAgenda } = plannerApi;',
             'const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds } = releasePresentationApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'

@@ -17,6 +17,7 @@ import {
     formatDuration,
     getModuleWeekAllocations,
     getTimelineMonths,
+    getVisibleGanttModules,
     getWeekAgenda
 } from './planner.js';
 import { normalizeDatabasePath } from './db-configuration.js';
@@ -833,10 +834,20 @@ function reconciliationKindLabel(kind) {
     }[kind] || 'Attività svolta';
 }
 
+function reconciliationEvidenceBadge(activity) {
+    return createElement('span', {
+        className: `release-evidence-badge${activity.evidenceVerified ? ' release-evidence-badge--verified' : ''}`,
+        text: `${activity.evidenceVerified ? '✓ ' : ''}${activity.evidenceLabel}`,
+        title: activity.evidenceVerified
+            ? 'Attività conclusa con evidenze finali collegate e verificate.'
+            : 'Manca una prova finale chiusa oppure l’attività non è ancora conclusa.'
+    });
+}
+
 function renderGantt() {
     clear(elements.ganttRows);
-    const modules = currentSchedule.modules;
-    const empty = modules.length === 0;
+    const modules = getVisibleGanttModules(currentSchedule);
+    const empty = modules.length === 0 && currentSchedule.actualActivities.length === 0;
     setHidden(elements.ganttEmpty, !empty);
     setHidden(elements.ganttTable, empty);
     if (empty) return;
@@ -877,7 +888,10 @@ function renderGantt() {
             attributes: { role: 'row' }
         }, [
             createElement('div', { attributes: { role: 'cell' } }, [
-                createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                createElement('div', { className: 'gantt__actual-title' }, [
+                    createElement('span', { className: 'gantt__module-title', text: activity.title }),
+                    reconciliationEvidenceBadge(activity)
+                ]),
                 createElement('span', {
                     className: 'gantt__module-meta',
                     text: `${reconciliationKindLabel(activity.kind)} · ${activity.closedEntryCount} intervalli conclusi${activity.openEntryCount ? ` · ${activity.openEntryCount} in corso` : ''}`
@@ -1280,6 +1294,7 @@ function renderWeeklyActualWork(presentation, selectedActivityId = null) {
         }, [
             createElement('strong', { text: activity.title }),
             createElement('span', { className: 'weekly-actual-activity__kind', text: activity.kindLabel }),
+            reconciliationEvidenceBadge(activity),
             createElement('span', {
                 className: 'allocation-pill__hours',
                 text: `Task attestati: ${activity.taskElapsedText} · tempo coperto: ${activity.dailyUnionText}`
