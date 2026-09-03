@@ -2,7 +2,8 @@ import {
     calculateActualEntriesMetrics,
     calculateActualWorkMetrics,
     releaseWorkPackagesForTopic,
-    summarizeModuleWorkPackageSnapshot
+    summarizeModuleWorkPackageSnapshot,
+    summarizeReconciliationEvidence
 } from './model.js';
 import { formatDate, formatDayName, formatDuration, parseIsoDate } from './planner.js';
 
@@ -261,6 +262,7 @@ function buildReconciliationActivities(releasePlan, locale) {
     return reconciliation.activities.map(activity => {
         const entries = activity.entryIds.map(entryId => entryById.get(entryId)).filter(Boolean);
         const metrics = calculateActualEntriesMetrics(entries);
+        const evidence = summarizeReconciliationEvidence(releasePlan, activity);
         const plannedSeconds = activity.baselinePlannedMinutes === null
             ? null
             : activity.baselinePlannedMinutes * 60;
@@ -275,6 +277,9 @@ function buildReconciliationActivities(releasePlan, locale) {
         }
         return {
             ...activity,
+            evidenceVerified: evidence.verified,
+            evidenceLabel: evidence.label,
+            verificationEvidence: evidence.evidence,
             kindLabel: RECONCILIATION_KIND_LABELS[activity.kind] || activity.kind,
             taskElapsedSeconds: metrics.taskElapsedSeconds,
             taskElapsedText: formatElapsedSeconds(metrics.taskElapsedSeconds),

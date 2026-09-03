@@ -15,6 +15,7 @@ import {
     releaseScopeInversionContributors,
     releaseWorkPackagesForTopic,
     summarizeModuleWorkPackageSnapshot,
+    summarizeReconciliationEvidence,
     summarizeScopeGateReadiness,
     updateDatabase
 } from '../js/model.js';
@@ -700,6 +701,44 @@ test('normalizza la riconciliazione attività-piano e conserva un mapping comple
     assert.equal(first.releasePlan.scheduleReconciliation.activities[0].kind, 'planned');
     assert.equal(first.releasePlan.scheduleReconciliation.activities[1].baselinePlannedMinutes, null);
     assert.deepEqual(second, first);
+});
+
+test('verifica una attività riconciliata soltanto con evidenze finali collegate', () => {
+    const database = reconciledActualWorkReleaseDatabase();
+    const activity = database.releasePlan.scheduleReconciliation.activities[0];
+    activity.status = 'complete';
+    activity.verificationEvidenceIds = ['pr-197-open'];
+
+    let normalized = normalizeDatabase(database).database;
+    let summary = summarizeReconciliationEvidence(
+        normalized.releasePlan,
+        normalized.releasePlan.scheduleReconciliation.activities[0]
+    );
+    assert.equal(summary.verified, false);
+    assert.equal(summary.label, 'Evidenza non verificata');
+
+    database.releasePlan.actualWorkLog.outputEvidence[0].status = 'merged';
+    database.releasePlan.actualWorkLog.outputEvidence[0].finalizedAt = '2026-08-21T10:00:00+02:00';
+    normalized = normalizeDatabase(database).database;
+    summary = summarizeReconciliationEvidence(
+        normalized.releasePlan,
+        normalized.releasePlan.scheduleReconciliation.activities[0]
+    );
+    assert.equal(summary.verified, true);
+    assert.equal(summary.label, 'Evidenza verificata');
+    assert.deepEqual(summary.evidence.map(item => item.id), ['pr-197-open']);
+});
+
+test('rifiuta una evidenza di verifica sconosciuta e mantiene compatibile la v5 precedente', () => {
+    const legacy = normalizeDatabase(reconciledActualWorkReleaseDatabase()).database;
+    assert.deepEqual(
+        legacy.releasePlan.scheduleReconciliation.activities.map(activity => activity.verificationEvidenceIds),
+        [[], []]
+    );
+
+    const invalid = reconciledActualWorkReleaseDatabase();
+    invalid.releasePlan.scheduleReconciliation.activities[0].verificationEvidenceIds = ['missing-evidence'];
+    assert.throws(() => normalizeDatabase(invalid), /evidenza sconosciuta/i);
 });
 
 test('rifiuta attività attestate duplicate o non classificate nella riconciliazione', () => {

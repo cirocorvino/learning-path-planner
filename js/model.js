@@ -10,6 +10,14 @@ const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
 const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
 const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
 const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
+const VERIFIED_OUTPUT_EVIDENCE_STATUSES = new Set([
+    'closed',
+    'complete',
+    'completed',
+    'merged',
+    'passed',
+    'reconciled'
+]);
 const DELIVERY_DEPENDENCY_TYPES = [
     'required_before_start',
     'overlap_after_design',
@@ -285,6 +293,23 @@ function uniqueIds(items, path) {
         }
         ids.add(item.id);
     });
+}
+
+export function summarizeReconciliationEvidence(releasePlan, activity) {
+    const evidenceById = new Map(
+        (releasePlan?.actualWorkLog?.outputEvidence || []).map(item => [item.id, item])
+    );
+    const evidenceIds = activity?.verificationEvidenceIds || [];
+    const evidence = evidenceIds.map(evidenceId => evidenceById.get(evidenceId)).filter(Boolean);
+    const verified = activity?.status === 'complete'
+        && evidenceIds.length > 0
+        && evidence.length === evidenceIds.length
+        && evidence.every(item => VERIFIED_OUTPUT_EVIDENCE_STATUSES.has(String(item.status).toLowerCase()));
+    return {
+        verified,
+        label: verified ? 'Evidenza verificata' : 'Evidenza non verificata',
+        evidence
+    };
 }
 
 function normalizeLocale(locale) {
@@ -687,7 +712,7 @@ function normalizeActualWorkLog(input, path, topicIds, workPackageIds) {
     };
 }
 
-function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds) {
+function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actualEntryIds, outputEvidenceIds) {
     const source = requireObject(input, path);
     const mappedEntryIds = new Set();
     const activities = requireArray(source.activities, `${path}.activities`).map((activity, index) => {
@@ -742,6 +767,19 @@ function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actua
             }
             mappedEntryIds.add(entryId);
         });
+        const verificationEvidenceIds = normalizeStringList(
+            activity.verificationEvidenceIds,
+            `${itemPath}.verificationEvidenceIds`,
+            120
+        ).map((evidenceId, evidenceIndex) => validId(
+            evidenceId,
+            `${itemPath}.verificationEvidenceIds[${evidenceIndex}]`
+        ));
+        verificationEvidenceIds.forEach(evidenceId => {
+            if (!outputEvidenceIds.has(evidenceId)) {
+                throw new Error(`${itemPath}.verificationEvidenceIds contiene l'evidenza sconosciuta ${evidenceId}.`);
+            }
+        });
         return {
             id: validId(activity.id, `${itemPath}.id`),
             title: requiredString(activity.title, `${itemPath}.title`, 300),
@@ -753,6 +791,7 @@ function normalizeScheduleReconciliation(input, path, moduleIds, topicIds, actua
             sourceModuleIds,
             sourceTopicIds,
             entryIds,
+            verificationEvidenceIds,
             baselinePlannedMinutes: finitePositive(
                 activity.baselinePlannedMinutes,
                 `${itemPath}.baselinePlannedMinutes`,
@@ -1702,7 +1741,8 @@ function normalizeReleasePlan(input, topicIds, moduleIds) {
                 'releasePlan.scheduleReconciliation',
                 moduleIds,
                 topicIds,
-                new Set(actualWorkLog.entries.map(entry => entry.id))
+                new Set(actualWorkLog.entries.map(entry => entry.id)),
+                new Set(actualWorkLog.outputEvidence.map(evidence => evidence.id))
             );
         }
     }

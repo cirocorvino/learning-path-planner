@@ -10,6 +10,7 @@ import {
     getReconciledActualActivities,
     getModuleWeekAllocations,
     getTimelineMonths,
+    getVisibleGanttModules,
     getWeekAgenda,
     getWeeklyCapacity,
     minutesBetween
@@ -112,8 +113,10 @@ test('porta avanti il forecast disatteso e pianifica soltanto i minuti residui',
     assert.deepEqual(actualActivities.map(activity => [
         activity.title,
         activity.taskElapsedSeconds,
-        activity.dailyUnionElapsedSeconds
-    ]), [['Onda 1 - Baseline', 7200, 7200]]);
+        activity.dailyUnionElapsedSeconds,
+        activity.evidenceVerified,
+        activity.evidenceLabel
+    ]), [['Onda 1 - Baseline', 7200, 7200, false, 'Evidenza non verificata']]);
     assert.equal(schedule.actualActivities[0].id, 'onda-one-actual');
     assert.equal(schedule.startDate, '2026-08-03');
     assert.equal(schedule.forecastStartDate, '2026-08-10');
@@ -128,6 +131,18 @@ test('porta avanti il forecast disatteso e pianifica soltanto i minuti residui',
     assert.equal(schedule.modules[0].completedMinutes, 120);
     assert.equal(schedule.modules[0].remainingTopicCount, 1);
     assert.deepEqual(allocations.map(item => [item.topicId, item.minutes]), [['environment', 60]]);
+});
+
+test('non ripropone nel Gantt futuro i moduli senza residuo', () => {
+    const schedule = {
+        modules: [
+            { id: 'completed', weeks: 0 },
+            { id: 'remaining', weeks: 2 }
+        ]
+    };
+
+    assert.deepEqual(getVisibleGanttModules(schedule).map(module => module.id), ['remaining']);
+    assert.deepEqual(getVisibleGanttModules(null), []);
 });
 
 test('un target oltre la capacità viene limitato e segnalato', () => {

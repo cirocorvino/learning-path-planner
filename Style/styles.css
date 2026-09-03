@@ -1352,6 +1352,43 @@ code {
     font-weight: 800;
 }
 
+.gantt__actual-title {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.55rem;
+    align-items: center;
+    min-width: 0;
+    margin-bottom: 0.2rem;
+}
+
+.gantt__actual-title .gantt__module-title {
+    min-width: 0;
+    margin-bottom: 0;
+    overflow-wrap: anywhere;
+}
+
+.release-evidence-badge {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    padding: 0.18rem 0.42rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.35rem;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.release-evidence-badge--verified {
+    border-color: #86efac;
+    background: #f0fdf4;
+    color: #166534;
+}
+
 .gantt__module-meta {
     color: var(--muted);
     font-size: 0.82rem;

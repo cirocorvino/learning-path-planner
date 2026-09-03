@@ -199,6 +199,8 @@ Nella v5 `scheduleMode: abstract_weekly_capacity` usa `plannedWeeklyMinutes` per
 
 `agentEffortEquivalentMinutes` è nullable e non viene ricavato dal wall-clock. La vista calcola sia la somma dei record per task sia `dailyUnionElapsed`, che unisce gli intervalli sovrapposti della giornata. Gli eventi in `outputEvidence` documentano pubblicazione, commit o merge, ma non sostituiscono mai l'intervallo di lavoro.
 
+Le attività di `scheduleReconciliation` possono indicare `verificationEvidenceIds`. Il Planner mostra **Evidenza verificata** soltanto quando l'attività è `complete`, tutti gli ID esistono in `actualWorkLog.outputEvidence` e ogni evidenza ha uno stato finale (`merged`, `complete`, `completed`, `closed`, `passed` o `reconciled`). Il campo è facoltativo: i database v5 precedenti restano leggibili e vengono mostrati come non verificati.
+
 ## Piano importabile
 
 **Importa piano** accetta un database completo oppure il solo oggetto `learning-plan`:
