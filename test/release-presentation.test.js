@@ -6,7 +6,11 @@ import {
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation,
-    buildWeeklyActualWorkPresentation
+    buildReleaseComparisonPresentation,
+    buildWorkPackageComparisonPresentation,
+    buildWeeklyActualWorkPresentation,
+    releaseComparisonChange,
+    releaseComparisonSection
 } from '../js/release-presentation.js';
 import { readFileSync } from 'node:fs';
 
@@ -96,6 +100,94 @@ test('presenta 74, 55 e 24 come medie dei WP distinti, non come progresso modulo
     assert.match(instrumentation.explanationText, /Non è avanzamento temporale/i);
 });
 
+test('presenta il confronto più recente per sezione e per elemento', () => {
+    const plan = {
+        latestComparison: {
+            id: 'comparison-one',
+            summary: 'Due sezioni sono cambiate.',
+            invariants: ['Pesi invariati.'],
+            fromSnapshot: { label: 'Prima', assessedAt: '2026-09-03', reference: 'old' },
+            toSnapshot: { label: 'Ora', assessedAt: '2026-09-17', reference: 'new' },
+            sections: [
+                {
+                    id: 'scope-metrics',
+                    label: 'Perimetri',
+                    status: 'changed',
+                    summary: 'Il Pilot avanza.',
+                    changes: [{
+                        id: 'pilot-change',
+                        itemId: 'pilot-v1',
+                        label: 'Pilot',
+                        kind: 'increase',
+                        before: '25,5%',
+                        after: '28,6%',
+                        delta: '+3,1 punti',
+                        note: ''
+                    }]
+                },
+                {
+                    id: 'gates',
+                    label: 'Gate',
+                    status: 'unchanged',
+                    summary: 'Nessun gate cambia stato.',
+                    changes: []
+                }
+            ]
+        }
+    };
+
+    const presentation = buildReleaseComparisonPresentation(plan);
+    assert.equal(presentation.changedSectionCount, 1);
+    assert.equal(presentation.unchangedSectionCount, 1);
+    assert.equal(releaseComparisonSection(plan, 'gates').status, 'unchanged');
+    assert.equal(releaseComparisonChange(plan, 'scope-metrics', 'pilot-v1').after, '28,6%');
+    assert.equal(releaseComparisonChange(plan, 'scope-metrics', 'missing'), null);
+});
+
+test('riassume e rende individuabili le variazioni dei work package', () => {
+    const plan = {
+        latestComparison: {
+            sections: [{
+                id: 'work-packages',
+                label: 'Work package',
+                status: 'changed',
+                summary: 'Tre WP variati.',
+                changes: [
+                    {
+                        itemId: 'completed-one',
+                        kind: 'increase',
+                        before: 'Parziale · 20%',
+                        after: 'Completato · 100%',
+                        delta: '+80 punti'
+                    },
+                    {
+                        itemId: 'state-one',
+                        kind: 'changed',
+                        before: '30% · Dormant',
+                        after: '30% · ConfigGated',
+                        delta: 'Percentuale invariata'
+                    },
+                    {
+                        itemId: 'state-two',
+                        kind: 'changed',
+                        before: '20% · fixture disponibili',
+                        after: '20% · benchmark da eseguire',
+                        delta: 'Percentuale invariata'
+                    }
+                ]
+            }]
+        }
+    };
+
+    assert.deepEqual(buildWorkPackageComparisonPresentation(plan), {
+        changedCount: 3,
+        completedCount: 1,
+        unchangedPercentageCount: 2,
+        summaryText: '3 WP variati · 1 completato · 2 aggiornati con percentuale invariata'
+    });
+    assert.equal(releaseComparisonChange(plan, 'work-packages', 'state-one').after, '30% · ConfigGated');
+});
+
 test('presenta intervallo task, unione giornaliera, output GitHub ed effort agentico separati', () => {
     const plan = {
         workPackages: [{ id: 'security', title: 'Isolamento AI' }],
@@ -150,6 +242,84 @@ test('presenta intervallo task, unione giornaliera, output GitHub ed effort agen
     assert.equal(presentation.days[0].entries[0].timingText, '17:00:57–17:02:47 · 1 min 50 s');
     assert.match(presentation.days[0].entries[0].source.reference, /Handoff TL/);
     assert.match(presentation.days[0].entries[0].outputEvidence[0].text, /#199.*Issue aperta/);
+});
+
+test('riassume il consuntivo giornaliero per ruolo e contenuto operativo', () => {
+    const baseEntry = {
+        date: '2026-09-17',
+        topicLabel: 'Review PR',
+        workPackageIds: ['delivery'],
+        description: 'Verifica delle modifiche.',
+        status: 'complete',
+        references: [{ kind: 'pr', reference: '#267' }],
+        agentEffortEquivalentMinutes: null,
+        timestampSourceId: 'handoff',
+        outputEvidenceIds: []
+    };
+    const plan = {
+        workPackages: [{ id: 'delivery', title: 'Delivery' }],
+        actualWorkLog: {
+            entryRule: 'Solo dati attestati.',
+            coverageNote: 'Copertura task Codex.',
+            semantics: {
+                agenticEffort: 'Separato.',
+                humanLeadTime: 'Separato.',
+                observedClock: 'Intervallo osservato.'
+            },
+            sources: [{ id: 'handoff', reference: 'Handoff TL', summary: 'Timestamp attestati.' }],
+            outputEvidence: [],
+            entries: [
+                {
+                    ...baseEntry,
+                    id: 'coder-one',
+                    roleTask: 'Coder #267',
+                    timing: {
+                        kind: 'clock_interval',
+                        startAt: '2026-09-17T09:00:00+02:00',
+                        endAt: '2026-09-17T09:30:00+02:00',
+                        timeZone: 'Europe/Rome',
+                        actualClockElapsedSeconds: 1800
+                    }
+                },
+                {
+                    ...baseEntry,
+                    id: 'coder-two',
+                    roleTask: 'Coder',
+                    timing: {
+                        kind: 'clock_interval',
+                        startAt: '2026-09-17T10:00:00+02:00',
+                        endAt: '2026-09-17T10:45:00+02:00',
+                        timeZone: 'Europe/Rome',
+                        actualClockElapsedSeconds: 2700
+                    }
+                },
+                {
+                    ...baseEntry,
+                    id: 'coder-three',
+                    roleTask: 'Coder',
+                    topicLabel: 'Test',
+                    description: 'Esecuzione della suite.',
+                    timing: {
+                        kind: 'clock_interval',
+                        startAt: '2026-09-17T11:00:00+02:00',
+                        endAt: '2026-09-17T11:15:00+02:00',
+                        timeZone: 'Europe/Rome',
+                        actualClockElapsedSeconds: 900
+                    }
+                }
+            ]
+        }
+    };
+
+    const group = buildActualWorkLogPresentation(plan).days[0].roleGroups[0];
+    assert.equal(group.roleLabel, 'Coder');
+    assert.equal(group.rangeText, '09:00–11:15');
+    assert.equal(group.elapsedText, '1 h 30 min');
+    assert.equal(group.entryCount, 3);
+    assert.equal(group.sources.length, 1);
+    assert.equal(group.activities.length, 2);
+    assert.equal(group.activities[0].entryCount, 2);
+    assert.equal(group.activities[0].elapsedText, '1 h 15 min');
 });
 
 test('presenta nella settimana solo attività attestate, raggruppate per issue e PR', () => {

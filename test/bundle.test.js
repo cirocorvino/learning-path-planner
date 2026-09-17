@@ -33,11 +33,22 @@ test('il bundle file locale include IndexedDB ma non incorpora la DEMO', async (
         /const \{ calculateActualEntriesMetrics, calculateActualWorkMetrics, releaseWorkPackagesForTopic, summarizeModuleWorkPackageSnapshot, summarizeReconciliationEvidence \} = modelApi;/
     );
     assert.match(bundle, /buildActualWorkLogPresentation/);
+    assert.match(bundle, /buildReleaseComparisonPresentation/);
+    assert.match(bundle, /buildWorkPackageComparisonPresentation/);
+    assert.match(bundle, /releaseComparisonChange/);
+    assert.match(
+        bundle,
+        /return \{ buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWorkPackageComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection \};/
+    );
+    assert.match(bundle, /day\.roleGroups\.forEach/);
     assert.match(bundle, /buildWeeklyActualWorkPresentation/);
     assert.match(
         bundle,
-        /const \{ buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds \} = releasePresentationApi;/
+        /const \{ buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWorkPackageComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection \} = releasePresentationApi;/
     );
+    assert.match(bundle, /releaseWorkPackagesSummary/);
+    assert.match(bundle, /critical-path__comparison/);
+    assert.match(bundle, /release-wp-row--changed/);
     assert.match(bundle, /currentSchedule\.actualActivities\.forEach/);
     assert.match(bundle, /getVisibleGanttModules\(currentSchedule\)/);
     assert.match(bundle, /className: 'actual-agenda'/);
@@ -52,6 +63,12 @@ test('rende collassabili i pannelli release senza collassare la schedulazione gi
     assert.match(index, /<details[^>]*aria-labelledby="workPackagesTitle"/);
     assert.match(index, /<details[^>]*aria-labelledby="releaseHistoryTitle"/);
     assert.match(index, /<details[^>]*id="releaseActualWorkPanel"/);
+    assert.match(index, /<section[^>]*id="releaseChangesPanel"/);
+    assert.match(index, /id="releaseContextComparison"/);
+    assert.match(index, /id="ganttComparison"/);
+    assert.match(index, /id="releaseWorkPackagesSummary"/);
+    assert.match(index, /<script defer src="js\/app\.bundle\.js\?v=6\.3"><\/script>/);
+    assert.match(index, /<link rel="stylesheet" href="Style\/styles\.css\?v=6\.3">/);
     assert.match(index, /<summary[^>]*release-panel__summary/);
     assert.doesNotMatch(index, /<details[^>]*id="weekDetail"/);
 });

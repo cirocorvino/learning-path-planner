@@ -2,11 +2,13 @@ export const DATABASE_KIND = 'learning-planner-database';
 export const PLAN_KIND = 'learning-plan';
 export const SCHEMA_VERSION = 2;
 export const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-export const RELEASE_PLAN_SCHEMA_VERSION = 5;
+export const RELEASE_PLAN_SCHEMA_VERSION = 6;
 
-const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, 4, RELEASE_PLAN_SCHEMA_VERSION];
+const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, RELEASE_PLAN_SCHEMA_VERSION];
 const RELEASE_SCHEDULE_MODES = ['clock_slots', 'abstract_weekly_capacity'];
 const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
+const RELEASE_COMPARISON_STATUSES = ['changed', 'unchanged', 'not_comparable'];
+const RELEASE_COMPARISON_KINDS = ['increase', 'decrease', 'changed', 'added', 'removed', 'unchanged'];
 const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
 const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
 const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
@@ -1445,6 +1447,65 @@ export function summarizeScopeGateReadiness(releasePlan, scopeId) {
     };
 }
 
+function normalizeSnapshotComparison(input, path) {
+    const source = requireObject(input, path);
+    const normalizeSnapshot = (snapshot, snapshotPath) => {
+        const value = requireObject(snapshot, snapshotPath);
+        return {
+            label: requiredString(value.label, `${snapshotPath}.label`, 160),
+            assessedAt: validDate(value.assessedAt, `${snapshotPath}.assessedAt`),
+            reference: requiredString(value.reference, `${snapshotPath}.reference`, 500)
+        };
+    };
+    const sections = requireArray(source.sections, `${path}.sections`).map((section, sectionIndex) => {
+        const sectionPath = `${path}.sections[${sectionIndex}]`;
+        requireObject(section, sectionPath);
+        const status = requiredString(section.status, `${sectionPath}.status`, 40);
+        if (!RELEASE_COMPARISON_STATUSES.includes(status)) {
+            throw new Error(`${sectionPath}.status non è supportato.`);
+        }
+        const changes = requireArray(section.changes, `${sectionPath}.changes`).map((change, changeIndex) => {
+            const changePath = `${sectionPath}.changes[${changeIndex}]`;
+            requireObject(change, changePath);
+            const kind = requiredString(change.kind, `${changePath}.kind`, 40);
+            if (!RELEASE_COMPARISON_KINDS.includes(kind)) {
+                throw new Error(`${changePath}.kind non è supportato.`);
+            }
+            return {
+                id: validId(change.id, `${changePath}.id`),
+                itemId: optionalString(change.itemId, 160),
+                label: requiredString(change.label, `${changePath}.label`, 240),
+                kind,
+                before: requiredString(change.before, `${changePath}.before`, 2000),
+                after: requiredString(change.after, `${changePath}.after`, 2000),
+                delta: optionalString(change.delta, 240),
+                note: optionalString(change.note, 2000)
+            };
+        });
+        uniqueIds(changes, `${sectionPath}.changes`);
+        if (status === 'changed' && changes.length === 0) {
+            throw new Error(`${sectionPath} è changed ma non contiene variazioni.`);
+        }
+        return {
+            id: validId(section.id, `${sectionPath}.id`),
+            label: requiredString(section.label, `${sectionPath}.label`, 160),
+            status,
+            summary: requiredString(section.summary, `${sectionPath}.summary`, 2000),
+            changes
+        };
+    });
+    uniqueIds(sections, `${path}.sections`);
+    return {
+        id: validId(source.id, `${path}.id`),
+        comparedAt: validDate(source.comparedAt, `${path}.comparedAt`),
+        fromSnapshot: normalizeSnapshot(source.fromSnapshot, `${path}.fromSnapshot`),
+        toSnapshot: normalizeSnapshot(source.toSnapshot, `${path}.toSnapshot`),
+        summary: requiredString(source.summary, `${path}.summary`, 2000),
+        invariants: normalizeStringList(source.invariants, `${path}.invariants`, 1000),
+        sections
+    };
+}
+
 function normalizeReleasePlan(input, topicIds, moduleIds) {
     const source = requireObject(input, 'releasePlan');
     const releasePlanSchemaVersion = Number(source.schemaVersion);
@@ -1455,6 +1516,7 @@ function normalizeReleasePlan(input, topicIds, moduleIds) {
     const hasMetricSemantics = releasePlanSchemaVersion >= 3;
     const hasAbsoluteFunctionalWeights = releasePlanSchemaVersion >= 4;
     const hasAttestedActualWork = releasePlanSchemaVersion >= 5;
+    const hasSnapshotComparison = releasePlanSchemaVersion >= 6;
 
     const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
     const sourceSnapshot = {
@@ -1480,6 +1542,9 @@ function normalizeReleasePlan(input, topicIds, moduleIds) {
         ),
         notes: optionalString(sourceSnapshotInput.notes, 2000)
     };
+    const latestComparison = hasSnapshotComparison
+        ? normalizeSnapshotComparison(source.latestComparison, 'releasePlan.latestComparison')
+        : null;
 
     const capacityInput = requireObject(source.capacity, 'releasePlan.capacity');
     const capacity = {
@@ -2044,6 +2109,7 @@ function normalizeReleasePlan(input, topicIds, moduleIds) {
     return {
         schemaVersion: releasePlanSchemaVersion,
         sourceSnapshot,
+        ...(hasSnapshotComparison ? { latestComparison } : {}),
         methodology,
         capacity,
         scopes,

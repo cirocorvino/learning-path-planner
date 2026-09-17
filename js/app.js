@@ -26,8 +26,12 @@ import {
     buildAllocationClassNames,
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation,
+    buildReleaseComparisonPresentation,
+    buildWorkPackageComparisonPresentation,
     buildWeeklyActualWorkPresentation,
-    formatElapsedSeconds
+    formatElapsedSeconds,
+    releaseComparisonChange,
+    releaseComparisonSection
 } from './release-presentation.js';
 import { plannerStore } from './store.js';
 
@@ -53,20 +57,33 @@ const elements = Object.fromEntries([
     'releaseDashboard',
     'releaseSourceSummary',
     'releaseCapacitySummary',
+    'releaseContextComparison',
     'releaseScopeCards',
     'releaseMetricSemantics',
+    'releaseChangesPanel',
+    'releaseChangesCount',
+    'releaseChangesPeriod',
+    'releaseChangesSummary',
+    'releaseChangesSections',
+    'releaseChangesInvariants',
     'releaseStatusPanel',
+    'releaseStatusComparison',
     'releaseDeliveryTotals',
     'releaseStatusHeadline',
     'releaseFunctionalNote',
     'releaseStatusDetails',
     'releaseNextStep',
+    'releaseCriticalComparison',
     'releaseCriticalSummary',
     'releaseCriticalPath',
     'releaseCriticalBranches',
     'releaseForecasts',
+    'releaseForecastComparison',
     'releaseWorkPackages',
+    'releaseWorkPackagesComparison',
+    'releaseWorkPackagesSummary',
     'releaseActualWorkPanel',
+    'releaseActualComparison',
     'releaseActualCoverage',
     'releaseActualSemantics',
     'releaseActualSummary',
@@ -74,9 +91,13 @@ const elements = Object.fromEntries([
     'releaseActualTotals',
     'releaseActualTotalsContent',
     'releaseGates',
+    'releaseGatesComparison',
     'releaseMilestones',
+    'releaseMilestonesComparison',
     'releaseHistory',
+    'releaseHistoryComparison',
     'planPeriod',
+    'ganttComparison',
     'ganttTable',
     'ganttRows',
     'ganttEmpty',
@@ -292,6 +313,108 @@ function releaseSummaryList(title, items) {
     return createElement('section', {}, [createElement('h4', { text: title }), list]);
 }
 
+const RELEASE_COMPARISON_STATUS_LABELS = {
+    changed: 'Variato',
+    unchanged: 'Invariato',
+    not_comparable: 'Non confrontabile'
+};
+
+const RELEASE_COMPARISON_KIND_LABELS = {
+    increase: 'Aumento',
+    decrease: 'Riduzione',
+    changed: 'Modifica',
+    added: 'Aggiunta',
+    removed: 'Rimozione',
+    unchanged: 'Invariato'
+};
+
+function releaseComparisonChangeNode(change, compact = false) {
+    return createElement('article', {
+        className: `release-change release-change--${change.kind}${compact ? ' release-change--compact' : ''}`
+    }, [
+        createElement('div', { className: 'release-change__heading' }, [
+            createElement('strong', { text: change.label }),
+            createElement('span', {
+                className: 'release-change__kind',
+                text: change.delta || RELEASE_COMPARISON_KIND_LABELS[change.kind] || change.kind
+            })
+        ]),
+        createElement('div', { className: 'release-change__values' }, [
+            createElement('span', { className: 'release-change__before' }, [
+                createElement('small', { text: 'Prima' }),
+                createElement('strong', { text: change.before })
+            ]),
+            createElement('span', { className: 'release-change__arrow', text: '→', attributes: { 'aria-hidden': 'true' } }),
+            createElement('span', { className: 'release-change__after' }, [
+                createElement('small', { text: 'Ora' }),
+                createElement('strong', { text: change.after })
+            ])
+        ]),
+        change.note ? createElement('p', { className: 'muted', text: change.note }) : null
+    ]);
+}
+
+function renderReleaseSectionComparison(target, releasePlan, sectionId, { showChanges = false } = {}) {
+    if (!target) return;
+    const section = releaseComparisonSection(releasePlan, sectionId);
+    clear(target);
+    setHidden(target, !section);
+    if (!section) return;
+    target.append(createElement('div', { className: 'release-section-comparison__summary' }, [
+        createElement('span', {
+            className: `release-section-comparison__status release-section-comparison__status--${section.status}`,
+            text: RELEASE_COMPARISON_STATUS_LABELS[section.status] || section.status
+        }),
+        createElement('p', { text: section.summary })
+    ]));
+    if (showChanges && section.changes.length) {
+        const list = createElement('div', { className: 'release-section-comparison__changes' });
+        section.changes.forEach(change => list.append(releaseComparisonChangeNode(change)));
+        target.append(list);
+    }
+}
+
+function itemComparisonNode(releasePlan, sectionId, itemId) {
+    const change = releaseComparisonChange(releasePlan, sectionId, itemId);
+    return change ? releaseComparisonChangeNode(change, true) : null;
+}
+
+function renderReleaseChanges(releasePlan, locale) {
+    const comparison = buildReleaseComparisonPresentation(releasePlan);
+    setHidden(elements.releaseChangesPanel, !comparison);
+    if (!comparison) return;
+    elements.releaseChangesCount.textContent = `${comparison.changedSectionCount} sezioni variate · ${comparison.unchangedSectionCount} invariate`;
+    elements.releaseChangesPeriod.textContent = [
+        `${comparison.fromSnapshot.label}: ${releaseDate(comparison.fromSnapshot.assessedAt, locale)}`,
+        `${comparison.toSnapshot.label}: ${releaseDate(comparison.toSnapshot.assessedAt, locale)}`
+    ].join(' → ');
+    elements.releaseChangesPeriod.title = `${comparison.fromSnapshot.reference} → ${comparison.toSnapshot.reference}`;
+    elements.releaseChangesSummary.textContent = comparison.summary;
+
+    clear(elements.releaseChangesSections);
+    comparison.changedSections.forEach(section => {
+        elements.releaseChangesSections.append(createElement('details', {
+            className: 'release-changes__section'
+        }, [
+            createElement('summary', {}, [
+                createElement('strong', { text: section.label }),
+                createElement('span', { text: `${section.changes.length} ${section.changes.length === 1 ? 'variazione' : 'variazioni'}` })
+            ]),
+            createElement('p', { text: section.summary }),
+            createElement('div', { className: 'release-section-comparison__changes' },
+                section.changes.map(change => releaseComparisonChangeNode(change)))
+        ]));
+    });
+
+    clear(elements.releaseChangesInvariants);
+    if (comparison.invariants.length) {
+        elements.releaseChangesInvariants.append(
+            createElement('strong', { text: 'Che cosa non è cambiato' }),
+            createElement('ul', {}, comparison.invariants.map(item => createElement('li', { text: item })))
+        );
+    }
+}
+
 function actualSummaryMetric(label, value, detail = '') {
     return createElement('article', {}, [
         createElement('span', { text: label }),
@@ -351,36 +474,50 @@ function renderActualWorkLog(releasePlan, locale) {
     }
     presentation.days.forEach(day => {
         const entries = createElement('div', { className: 'release-actual-day__entries' });
-        day.entries.forEach(entry => {
-            const outputEvidence = createElement('div', { className: 'release-actual-entry__evidence' }, [
-                createElement('strong', { text: 'Evidenza output' })
+        day.roleGroups.forEach(group => {
+            const sources = createElement('div', { className: 'release-actual-role__sources' }, [
+                createElement('strong', { text: 'Fonte intervalli' })
             ]);
-            if (entry.outputEvidence.length) {
-                const list = createElement('ul');
-                entry.outputEvidence.forEach(evidence => list.append(createElement('li', { text: evidence.text })));
-                outputEvidence.append(list);
+            if (group.sources.length === 1) {
+                sources.append(createElement('span', { text: group.sources[0] }));
             } else {
-                outputEvidence.append(createElement('span', { text: 'Nessun evento GitHub associato; vale la fonte task.' }));
+                sources.append(createElement('ul', {}, group.sources.map(source => createElement('li', { text: source }))));
             }
+
+            const activities = createElement('div', { className: 'release-actual-role__activities' });
+            group.activities.forEach(activity => {
+                const evidenceText = activity.outputEvidence.length
+                    ? activity.outputEvidence.join(' · ')
+                    : 'Nessun evento GitHub associato; vale la fonte task.';
+                activities.append(createElement('article', { className: 'release-actual-role__activity' }, [
+                    createElement('div', { className: 'release-actual-role__activity-heading' }, [
+                        createElement('strong', { text: activity.topicLabel }),
+                        createElement('span', { text: activity.elapsedText })
+                    ]),
+                    createElement('p', { text: activity.description }),
+                    createElement('small', {
+                        text: [activity.referencesText, activity.workPackagesText].filter(Boolean).join(' · ')
+                    }),
+                    activity.entryCount > 1
+                        ? createElement('small', { text: `${activity.entryCount} intervalli con lo stesso contenuto` })
+                        : null,
+                    createElement('small', { text: evidenceText })
+                ]));
+            });
+
             entries.append(createElement('article', { className: 'release-actual-entry' }, [
                 createElement('div', { className: 'release-actual-entry__heading' }, [
-                    createElement('strong', { text: entry.roleTask }),
-                    releaseStatusBadge(entry.status)
+                    createElement('strong', { text: group.roleLabel }),
+                    ...group.statuses.map(status => releaseStatusBadge(status))
                 ]),
-                createElement('span', { className: 'release-actual-entry__time', text: entry.timingText }),
-                createElement('p', {}, [
-                    createElement('strong', { text: entry.topicLabel }),
-                    document.createTextNode(` · ${entry.description}`)
+                createElement('div', { className: 'release-actual-role__timing' }, [
+                    createElement('strong', { text: `${group.rangeText} · ${group.elapsedText} totali` }),
+                    createElement('small', {
+                        text: `${group.entryCount} ${group.entryCount === 1 ? 'intervallo' : 'intervalli'}${group.unplacedText === '0 s' ? '' : ` · ${group.unplacedText} non collocati`}`
+                    }),
+                    sources
                 ]),
-                createElement('small', {
-                    text: [entry.referencesText, entry.workPackagesText].filter(Boolean).join(' · ')
-                }),
-                createElement('div', { className: 'release-actual-entry__source' }, [
-                    createElement('strong', { text: 'Fonte intervallo' }),
-                    createElement('span', { text: `${entry.source.reference} · ${entry.source.summary}` })
-                ]),
-                outputEvidence,
-                createElement('small', { text: entry.agentEffortText })
+                activities
             ]));
         });
         const openText = day.openEntryCount
@@ -443,6 +580,10 @@ function renderReleaseDashboard() {
         `calibrazione ${releasePlan.capacity.calibrationWindowWeeks} settimane`
     ].join(' · ');
     elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
+    renderReleaseSectionComparison(elements.releaseContextComparison, releasePlan, 'release-context', {
+        showChanges: true
+    });
+    renderReleaseChanges(releasePlan, locale);
 
     clear(elements.releaseScopeCards);
     releasePlan.scopes.forEach((scope, scopeIndex) => {
@@ -497,6 +638,7 @@ function renderReleaseDashboard() {
             createElement('small', {
                 text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
             }),
+            itemComparisonNode(releasePlan, 'scope-metrics', scope.id),
             createElement('div', { className: 'release-scope__readiness' }, [
                 createElement('span', { text: releasePlan.metricSemantics?.releaseReadiness.label || 'Readiness di rilascio' }),
                 releaseReadinessBadge(readiness.status),
@@ -525,13 +667,21 @@ function renderReleaseDashboard() {
             createElement('p', {
                 className: 'muted',
                 text: `${metricSemantics.releaseReadiness.rule} ${metricSemantics.releaseReadiness.blockingRule}`
-            })
+            }),
+            (() => {
+                const comparison = createElement('div', { className: 'release-section-comparison' });
+                renderReleaseSectionComparison(comparison, releasePlan, 'metric-semantics');
+                return comparison;
+            })()
         );
     }
 
     const releaseStatus = releasePlan.releaseStatus;
     setHidden(elements.releaseStatusPanel, !releaseStatus);
     if (releaseStatus) {
+        renderReleaseSectionComparison(elements.releaseStatusComparison, releasePlan, 'release-status', {
+            showChanges: true
+        });
         const totals = releasePlan.deliveryTotals?.revisedBaseline;
         elements.releaseStatusHeadline.textContent = releaseStatus.headline;
         elements.releaseFunctionalNote.textContent = releaseStatus.functionalCompletionNote;
@@ -549,18 +699,27 @@ function renderReleaseDashboard() {
     }
 
     const workPackageById = releaseWorkPackageMap();
+    renderReleaseSectionComparison(elements.releaseCriticalComparison, releasePlan, 'critical-path', {
+        showChanges: true
+    });
     clear(elements.releaseCriticalPath);
     elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
     releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
         const workPackage = workPackageById.get(workPackageId);
         if (!workPackage) return;
-        elements.releaseCriticalPath.append(createElement('li', {}, [
+        const comparison = itemComparisonNode(releasePlan, 'work-packages', workPackage.id);
+        elements.releaseCriticalPath.append(createElement('li', {
+            className: comparison ? 'critical-path__item critical-path__item--changed' : 'critical-path__item'
+        }, [
             createElement('span', { text: workPackage.title }),
             releaseStatusBadge(workPackage.status),
             createElement('strong', {
                 text: `Stato WP ${workPackage.completionPercent.toFixed(1)}%`,
                 title: `Snapshot ${releaseDate(workPackage.lastReviewedAt, locale)}`
-            })
+            }),
+            comparison
+                ? createElement('div', { className: 'critical-path__comparison' }, [comparison])
+                : null
         ]));
     });
     clear(elements.releaseCriticalBranches);
@@ -575,6 +734,7 @@ function renderReleaseDashboard() {
         ]));
     });
 
+    renderReleaseSectionComparison(elements.releaseForecastComparison, releasePlan, 'forecasts');
     clear(elements.releaseForecasts);
     releasePlan.forecasts.forEach(forecast => {
         elements.releaseForecasts.append(createElement('article', { className: 'forecast' }, [
@@ -591,15 +751,27 @@ function renderReleaseDashboard() {
                     text: `${releaseDate(forecast.prudentStart, locale)} – ${releaseDate(forecast.prudentEnd, locale)}`
                 })
             ]),
-            createElement('small', { text: forecast.commitmentStatus })
+            createElement('small', { text: forecast.commitmentStatus }),
+            itemComparisonNode(releasePlan, 'forecasts', forecast.id)
         ]));
     });
 
+    renderReleaseSectionComparison(elements.releaseWorkPackagesComparison, releasePlan, 'work-packages');
+    const workPackageComparison = buildWorkPackageComparisonPresentation(releasePlan);
+    elements.releaseWorkPackagesSummary.textContent = workPackageComparison?.summaryText
+        || 'Un peso funzionale comune; gli scope cambiano per membership';
     clear(elements.releaseWorkPackages);
     releasePlan.workPackages.forEach(workPackage => {
+        const comparisonChange = releaseComparisonChange(releasePlan, 'work-packages', workPackage.id);
         const title = createElement('div', { className: 'release-wp__title' }, [
             createElement('strong', { text: workPackage.title })
         ]);
+        if (comparisonChange) {
+            title.append(createElement('span', {
+                className: 'release-tag release-tag--change',
+                text: `Variato · ${comparisonChange.delta || 'stato aggiornato'}`
+            }));
+        }
         const isPrimaryChain = (releasePlan.criticalPath.primaryChainWorkPackageIds || [])
             .includes(workPackage.id);
         if (isPrimaryChain || (!releasePlan.releaseStatus && workPackage.criticalPath)) {
@@ -690,7 +862,9 @@ function renderReleaseDashboard() {
             ])
             : createElement('span', { className: 'muted', text: 'Stima delivery non disponibile nel formato precedente.' });
 
-        const row = createElement('tr');
+        const row = createElement('tr', {
+            className: comparisonChange ? 'release-wp-row--changed' : ''
+        });
         row.append(
             createElement('td', { attributes: { 'data-label': 'Work package' } }, [
                 title,
@@ -700,7 +874,8 @@ function renderReleaseDashboard() {
                         createElement('strong', { text: 'Risultato concreto' }),
                         createElement('span', { text: workPackage.productOutcome })
                     ])
-                    : null
+                    : null,
+                itemComparisonNode(releasePlan, 'work-packages', workPackage.id)
             ]),
             createElement('td', { attributes: { 'data-label': 'Stato funzionale' } }, [progressCell]),
             createElement('td', { attributes: { 'data-label': 'Stato reale e residuo' } }, [stateDetail]),
@@ -710,8 +885,12 @@ function renderReleaseDashboard() {
         elements.releaseWorkPackages.append(row);
     });
 
+    renderReleaseSectionComparison(elements.releaseActualComparison, releasePlan, 'actual-work', {
+        showChanges: true
+    });
     renderActualWorkLog(releasePlan, locale);
 
+    renderReleaseSectionComparison(elements.releaseGatesComparison, releasePlan, 'gates');
     clear(elements.releaseGates);
     releasePlan.gates.forEach(gate => {
         const criteria = createElement('ul');
@@ -730,6 +909,7 @@ function renderReleaseDashboard() {
     });
 
     const forecastById = new Map(releasePlan.forecasts.map(forecast => [forecast.id, forecast]));
+    renderReleaseSectionComparison(elements.releaseMilestonesComparison, releasePlan, 'milestones');
     clear(elements.releaseMilestones);
     releasePlan.milestones.forEach(milestone => {
         const forecast = forecastById.get(milestone.forecastId);
@@ -747,6 +927,9 @@ function renderReleaseDashboard() {
         ]));
     });
 
+    renderReleaseSectionComparison(elements.releaseHistoryComparison, releasePlan, 'history', {
+        showChanges: true
+    });
     clear(elements.releaseHistory);
     const historyEntries = [
         ...releasePlan.changeHistory.map(change => ({
@@ -846,6 +1029,7 @@ function reconciliationEvidenceBadge(activity) {
 
 function renderGantt() {
     clear(elements.ganttRows);
+    renderReleaseSectionComparison(elements.ganttComparison, currentDatabase.releasePlan, 'gantt');
     const modules = getVisibleGanttModules(currentSchedule);
     const empty = modules.length === 0 && currentSchedule.actualActivities.length === 0;
     setHidden(elements.ganttEmpty, !empty);
@@ -947,7 +1131,8 @@ function renderGantt() {
                         ? `${module.remainingTopicCount} argomenti residui · ${module.completedTopicCount} completati${isCritical ? ' · percorso critico' : ''}`
                         : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
             }),
-            moduleSnapshotDetails
+            moduleSnapshotDetails,
+            itemComparisonNode(currentDatabase.releasePlan, 'gantt', module.id)
         ]);
 
         const effort = createElement('div', { attributes: { role: 'cell' } }, [

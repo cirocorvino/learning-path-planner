@@ -8,7 +8,7 @@
     <title>Learning Path Planner</title>
     <link rel="icon" type="image/svg+xml" href="Style/favicon.svg">
     <link rel="manifest" href="Style/manifest.json">
-    <link rel="stylesheet" href="Style/styles.css">
+    <link rel="stylesheet" href="Style/styles.css?v=6.3">
 </head>
 <body>
     <header class="hero">
@@ -76,11 +76,26 @@
                 </div>
                 <p id="releaseCapacitySummary" class="release-dashboard__capacity"></p>
             </div>
+            <div id="releaseContextComparison" class="release-section-comparison"></div>
 
             <div id="releaseScopeCards" class="release-scopes" aria-label="Avanzamento per perimetro"></div>
 
             <section id="releaseMetricSemantics" class="release-metric-semantics hidden"
                 aria-label="Come leggere le metriche del rilascio"></section>
+
+            <section id="releaseChangesPanel" class="release-changes hidden" aria-labelledby="releaseChangesTitle">
+                <div class="release-changes__heading">
+                    <div>
+                        <span class="eyebrow eyebrow--dark">Confronto con il piano precedente</span>
+                        <h3 id="releaseChangesTitle">Che cosa è cambiato</h3>
+                    </div>
+                    <span id="releaseChangesCount" class="release-changes__count"></span>
+                </div>
+                <p id="releaseChangesPeriod" class="muted"></p>
+                <p id="releaseChangesSummary" class="release-changes__summary"></p>
+                <div id="releaseChangesSections" class="release-changes__sections"></div>
+                <div id="releaseChangesInvariants" class="release-changes__invariants"></div>
+            </section>
 
             <details id="releaseStatusPanel" class="release-panel release-panel--wide release-state-summary hidden"
                 aria-labelledby="releaseStateTitle" open>
@@ -88,6 +103,7 @@
                     <h3 id="releaseStateTitle">Che cosa significa oggi</h3>
                     <span id="releaseDeliveryTotals" class="release-state-summary__totals"></span>
                 </summary>
+                <div id="releaseStatusComparison" class="release-section-comparison"></div>
                 <p id="releaseStatusHeadline" class="release-state-summary__headline"></p>
                 <p id="releaseFunctionalNote" class="muted"></p>
                 <div id="releaseStatusDetails" class="release-state-summary__grid"></div>
@@ -97,12 +113,14 @@
             <div class="release-dashboard__grid">
                 <details class="release-panel" aria-labelledby="criticalPathTitle" open>
                     <summary class="release-panel__summary"><h3 id="criticalPathTitle">Percorso critico</h3></summary>
+                    <div id="releaseCriticalComparison" class="release-section-comparison"></div>
                     <p id="releaseCriticalSummary" class="muted"></p>
                     <ol id="releaseCriticalPath" class="critical-path"></ol>
                     <div id="releaseCriticalBranches" class="critical-branches"></div>
                 </details>
                 <details class="release-panel" aria-labelledby="forecastTitle" open>
                     <summary class="release-panel__summary"><h3 id="forecastTitle">Previsioni</h3></summary>
+                    <div id="releaseForecastComparison" class="release-section-comparison"></div>
                     <div id="releaseForecasts" class="forecast-list"></div>
                 </details>
             </div>
@@ -110,8 +128,9 @@
             <details class="release-panel release-panel--wide" aria-labelledby="workPackagesTitle">
                 <summary class="release-panel__heading release-panel__summary">
                     <h3 id="workPackagesTitle">Work package</h3>
-                    <span class="muted">Un peso funzionale comune; gli scope cambiano per membership</span>
+                    <span id="releaseWorkPackagesSummary" class="muted">Un peso funzionale comune; gli scope cambiano per membership</span>
                 </summary>
+                <div id="releaseWorkPackagesComparison" class="release-section-comparison"></div>
                 <div class="release-table-wrap">
                     <table class="release-table">
                         <thead>
@@ -136,6 +155,7 @@
                         <p id="releaseActualCoverage" class="muted"></p>
                     </div>
                 </summary>
+                <div id="releaseActualComparison" class="release-section-comparison"></div>
                 <div id="releaseActualSemantics" class="release-actual-semantics"></div>
                 <div id="releaseActualSummary" class="release-actual-summary"></div>
                 <div id="releaseActualDays" class="release-actual-days"></div>
@@ -148,16 +168,19 @@
             <div class="release-dashboard__grid">
                 <details class="release-panel" aria-labelledby="gatesTitle">
                     <summary class="release-panel__summary"><h3 id="gatesTitle">Gate</h3></summary>
+                    <div id="releaseGatesComparison" class="release-section-comparison"></div>
                     <div id="releaseGates" class="gate-list"></div>
                 </details>
                 <details class="release-panel" aria-labelledby="milestonesTitle">
                     <summary class="release-panel__summary"><h3 id="milestonesTitle">Milestone</h3></summary>
+                    <div id="releaseMilestonesComparison" class="release-section-comparison"></div>
                     <div id="releaseMilestones" class="milestone-list"></div>
                 </details>
             </div>
 
             <details class="release-panel release-panel--wide" aria-labelledby="releaseHistoryTitle">
                 <summary class="release-panel__summary"><h3 id="releaseHistoryTitle">Storico e variazioni di perimetro</h3></summary>
+                <div id="releaseHistoryComparison" class="release-section-comparison"></div>
                 <div id="releaseHistory" class="release-history"></div>
             </details>
         </section>
@@ -170,6 +193,7 @@
                 </div>
                 <p id="planPeriod" class="muted"></p>
             </div>
+            <div id="ganttComparison" class="release-section-comparison hidden"></div>
             <div id="ganttEmpty" class="empty hidden">
                 Il piano non contiene ancora moduli. Usa “Moduli e argomenti” per iniziare.
             </div>
@@ -304,6 +328,6 @@
         </form>
     </dialog>
 
-    <script defer src="js/app.bundle.js"></script>
+    <script defer src="js/app.bundle.js?v=6.3"></script>
 </body>
 </html>

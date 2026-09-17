@@ -531,6 +531,53 @@ function reconciledActualWorkReleaseDatabase() {
     return database;
 }
 
+function comparedReleaseDatabase() {
+    const database = actualWorkReleaseDatabase();
+    database.releasePlan.schemaVersion = 6;
+    database.releasePlan.latestComparison = {
+        id: 'snapshot-2026-09-03-to-2026-09-17',
+        comparedAt: '2026-09-17',
+        fromSnapshot: {
+            label: 'Piano precedente',
+            assessedAt: '2026-09-03',
+            reference: 'piano@old'
+        },
+        toSnapshot: {
+            label: 'Piano corrente',
+            assessedAt: '2026-09-17',
+            reference: 'piano@new'
+        },
+        summary: 'Il completamento aumenta grazie a una consegna verificata.',
+        invariants: ['Pesi e capacità restano invariati.'],
+        sections: [
+            {
+                id: 'scope-metrics',
+                label: 'Perimetri',
+                status: 'changed',
+                summary: 'Il Pilot aumenta.',
+                changes: [{
+                    id: 'pilot-progress',
+                    itemId: 'pilot-v1',
+                    label: 'Pilot v1',
+                    kind: 'increase',
+                    before: '25,5%',
+                    after: '28,6%',
+                    delta: '+3,1 punti',
+                    note: 'Solo evidenze concluse.'
+                }]
+            },
+            {
+                id: 'gates',
+                label: 'Gate',
+                status: 'unchanged',
+                summary: 'Nessun gate cambia stato.',
+                changes: []
+            }
+        ]
+    };
+    return database;
+}
+
 test('considera vuoto un database senza moduli', () => {
     assert.equal(databaseHasContent(createEmptyDatabase()), false);
     assert.equal(databaseHasContent(example), true);
@@ -691,6 +738,31 @@ test('mantiene stabile il round-trip del release plan v5', () => {
     const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
 
     assert.deepEqual(second, first);
+});
+
+test('normalizza e conserva il confronto strutturato del release plan v6', () => {
+    const first = normalizeDatabase(comparedReleaseDatabase()).database;
+    const second = normalizeDatabase(JSON.parse(JSON.stringify(first))).database;
+
+    assert.equal(first.releasePlan.schemaVersion, 6);
+    assert.equal(first.releasePlan.latestComparison.sections[0].status, 'changed');
+    assert.equal(first.releasePlan.latestComparison.sections[0].changes[0].itemId, 'pilot-v1');
+    assert.deepEqual(second, first);
+});
+
+test('rifiuta confronti v6 incoerenti o ambigui', () => {
+    const invalidStatus = comparedReleaseDatabase();
+    invalidStatus.releasePlan.latestComparison.sections[0].status = 'maybe';
+    assert.throws(() => normalizeDatabase(invalidStatus), /status non è supportato/);
+
+    const changedWithoutDetails = comparedReleaseDatabase();
+    changedWithoutDetails.releasePlan.latestComparison.sections[0].changes = [];
+    assert.throws(() => normalizeDatabase(changedWithoutDetails), /changed ma non contiene variazioni/);
+
+    const duplicateChange = comparedReleaseDatabase();
+    const changes = duplicateChange.releasePlan.latestComparison.sections[0].changes;
+    changes.push(structuredClone(changes[0]));
+    assert.throws(() => normalizeDatabase(duplicateChange), /id è duplicato/i);
 });
 
 test('normalizza la riconciliazione attività-piano e conserva un mapping completo', () => {

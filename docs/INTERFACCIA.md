@@ -101,7 +101,7 @@ Le schede sotto la barra delle azioni mostrano:
 - **Impegno totale:** somma delle stime degli argomenti dopo l'applicazione dei coefficienti;
 - **Durata:** settimane necessarie includendo pause ed eventuali riduzioni di capacità;
 - **Moduli:** numero di moduli attivi e buffer;
-- **Capacità settimanale:** durata complessiva degli slot `focus`, oppure budget astratto dichiarato dal release plan v5;
+- **Capacità settimanale:** durata complessiva degli slot `focus`, oppure budget astratto dichiarato dal release plan v5/v6;
 - **Conclusione stimata:** ultimo giorno previsto dal piano.
 
 Un avviso compare quando mancano slot focus, il target supera la capacità o una migrazione richiede attenzione.
@@ -117,6 +117,8 @@ Quando il database contiene un `releasePlan`, la dashboard separa quattro inform
 
 Le carte Pilot, MVP pubblico e Visione riportano completamento, ampiezza, versione del denominatore e data dello snapshot. Lo stesso WP mantiene lo stesso peso in tutti gli scope; cambia soltanto la membership. Se uno scope più ampio mostra un completamento superiore, un dettaglio espandibile elenca i WP esclusivi che contribuiscono all'aumento. La readiness rimane sempre separata.
 
+Nei release plan v6, **Che cosa è cambiato** confronta lo snapshot corrente con il precedente. Ogni sezione mostra inoltre un richiamo locale: `Prima → Ora` per i valori variati oppure una dichiarazione esplicita di invarianza. Il confronto non viene ricostruito da testi liberi della cronologia: è validato come parte del database.
+
 La sezione **Consuntivo attestato** dei release plan v5 separa:
 
 - somma degli elapsed osservati per task;
@@ -124,7 +126,7 @@ La sezione **Consuntivo attestato** dei release plan v5 separa:
 - durate attestate ancora prive di fascia oraria;
 - effort agentico equivalente, mostrato solo quando è fornito esplicitamente.
 
-Ogni giorno conserva gli intervalli originali, la fonte dei timestamp e gli eventi GitHub in una colonna distinta. Le attività ancora aperte non ricevono una fine e non entrano nei totali. Il registro descrive la copertura delle task disponibili, non un timesheet umano esaustivo.
+Ogni giorno presenta una riga sintetica per ruolo. La seconda colonna riporta il primo inizio, l'ultima fine, la somma degli intervalli e le fonti distinte; la terza raggruppa le attività in base al testo operativo, mostrando una sola copia quando non ci sono variazioni. Gli intervalli originali restano nel JSON, le attività aperte non ricevono una fine e non entrano nei totali. Il registro descrive la copertura delle task disponibili, non un timesheet umano esaustivo.
 
 ## Diagramma di Gantt
 

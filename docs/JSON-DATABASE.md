@@ -132,8 +132,17 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
   },
   "state": { "progress": {} },
   "releasePlan": {
-    "schemaVersion": 5,
+    "schemaVersion": 6,
     "sourceSnapshot": {},
+    "latestComparison": {
+      "id": "snapshot-previous-to-current",
+      "comparedAt": "2026-09-17",
+      "fromSnapshot": {},
+      "toSnapshot": {},
+      "summary": "",
+      "invariants": [],
+      "sections": []
+    },
     "methodology": {},
     "metricSemantics": {},
     "absoluteWeightModel": {
@@ -171,7 +180,7 @@ Il database v3 mantiene invariati calendario, piano e stato v2 e aggiunge l'ogge
 }
 ```
 
-I formati `releasePlan` v1-v4 restano leggibili. La v2 aggiunge riepilogo, baseline e coefficienti adattivi; la v3 aggiunge la semantica esplicita delle metriche. La v4 introduce un solo `functionalWeight` per WP, membership esplicita tramite `scope.workPackageIds` e `reportedBreadthPercent`. La v5 separa capacità agentica astratta, lead time e consuntivo reale attestato.
+I formati `releasePlan` v1-v5 restano leggibili. La v2 aggiunge riepilogo, baseline e coefficienti adattivi; la v3 aggiunge la semantica esplicita delle metriche. La v4 introduce un solo `functionalWeight` per WP, membership esplicita tramite `scope.workPackageIds` e `reportedBreadthPercent`. La v5 separa capacità agentica astratta, lead time e consuntivo reale attestato. La v6 registra il confronto strutturato fra lo snapshot corrente e quello precedente.
 
 Ogni work package dichiara stato, percentuale, risultato concreto, stato reale, lavoro residuo, owner, ultima revisione, evidenze, dipendenze ed eventuali topic del piano. Nella v4 aggiunge un solo `functionalWeight` con la relativa origine; le versioni precedenti conservano i pesi storici per-scope. `deliveryEstimate` espone profilo, natura della stima, coefficiente iniziale/applicato, confidenza, ore base/corrette e lead time esterni. Le ore dei work package con topic condivisi non sono additive: il Gantt conta ogni topic una sola volta.
 
@@ -198,6 +207,10 @@ Nella v5 `scheduleMode: abstract_weekly_capacity` usa `plannedWeeklyMinutes` per
 - `open_interval`: solo `startAt` e `timeZone`, senza durata o fine finché l'attività resta aperta.
 
 `agentEffortEquivalentMinutes` è nullable e non viene ricavato dal wall-clock. La vista calcola sia la somma dei record per task sia `dailyUnionElapsed`, che unisce gli intervalli sovrapposti della giornata. Gli eventi in `outputEvidence` documentano pubblicazione, commit o merge, ma non sostituiscono mai l'intervallo di lavoro.
+
+La vista giornaliera raggruppa le voci per ruolo e per contenuto operativo. Per ogni ruolo mostra il primo inizio, l'ultima fine, la somma delle durate degli intervalli, le fonti distinte e una sola copia dei testi identici. Le singole voci restano in `actualWorkLog.entries` come audit trail e non vengono aggregate distruttivamente nel JSON.
+
+`latestComparison` conserva i due snapshot confrontati, un riepilogo, gli invarianti e una voce per ciascuna sezione dell'interfaccia. Ogni sezione dichiara `changed`, `unchanged` o `not_comparable`; le variazioni puntuali riportano sempre `before` e `after` e possono collegarsi a scope, forecast, WP o moduli tramite `itemId`. La cronologia di lungo periodo resta in `changeHistory`: `latestComparison` serve a spiegare il delta dell'ultimo aggiornamento, non la sostituisce.
 
 Le attività di `scheduleReconciliation` possono indicare `verificationEvidenceIds`. Il Planner mostra **Evidenza verificata** soltanto quando l'attività è `complete`, tutti gli ID esistono in `actualWorkLog.outputEvidence` e ogni evidenza ha uno stato finale (`merged`, `complete`, `completed`, `closed`, `passed` o `reconciled`). Il campo è facoltativo: i database v5 precedenti restano leggibili e vengono mostrati come non verificati.
 
