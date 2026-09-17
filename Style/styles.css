@@ -872,6 +872,29 @@ code {
     font-size: 0.84rem;
 }
 
+.critical-path__item--changed {
+    border-left: 3px solid #d97706;
+    padding-left: 0.55rem;
+}
+
+.critical-path__comparison {
+    grid-column: 1 / -1;
+    min-width: 0;
+}
+
+.critical-path__comparison .release-change--compact {
+    margin-top: 0.1rem;
+}
+
+.release-tag--change {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.release-wp-row--changed > td:first-child {
+    border-left: 3px solid #d97706;
+}
+
 .critical-branches {
     display: grid;
     gap: 0.55rem;

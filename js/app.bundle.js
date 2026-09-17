@@ -2971,6 +2971,27 @@
             };
         }
 
+        function buildWorkPackageComparisonPresentation(releasePlan) {
+            const section = releaseComparisonSection(releasePlan, 'work-packages');
+            if (!section) return null;
+
+            const completedCount = section.changes.filter(change =>
+                /\bcompletat[oa]\b/i.test(change.after)
+            ).length;
+            const unchangedPercentageCount = section.changes.filter(change =>
+                /percentuale invariata/i.test(change.delta)
+            ).length;
+
+            return {
+                changedCount: section.changes.length,
+                completedCount,
+                unchangedPercentageCount,
+                summaryText: section.changes.length
+                    ? `${section.changes.length} WP variati · ${completedCount} ${completedCount === 1 ? 'completato' : 'completati'} · ${unchangedPercentageCount} aggiornati con percentuale invariata`
+                    : 'Nessuna variazione rispetto al piano precedente'
+            };
+        }
+
         function formatClock(timestamp, locale, timeZone) {
             return new Intl.DateTimeFormat(locale, {
                 hour: '2-digit',
@@ -3521,7 +3542,7 @@
             };
         }
 
-        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection };
+        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWorkPackageComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection };
     })();
 
     const configurationApi = (() => {
@@ -4262,7 +4283,7 @@
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getVisibleGanttModules, getWeekAgenda } = plannerApi;
-        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection } = releasePresentationApi;
+        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWorkPackageComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -4312,6 +4333,7 @@
             'releaseForecastComparison',
             'releaseWorkPackages',
             'releaseWorkPackagesComparison',
+            'releaseWorkPackagesSummary',
             'releaseActualWorkPanel',
             'releaseActualComparison',
             'releaseActualCoverage',
@@ -4937,13 +4959,19 @@
             releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
                 const workPackage = workPackageById.get(workPackageId);
                 if (!workPackage) return;
-                elements.releaseCriticalPath.append(createElement('li', {}, [
+                const comparison = itemComparisonNode(releasePlan, 'work-packages', workPackage.id);
+                elements.releaseCriticalPath.append(createElement('li', {
+                    className: comparison ? 'critical-path__item critical-path__item--changed' : 'critical-path__item'
+                }, [
                     createElement('span', { text: workPackage.title }),
                     releaseStatusBadge(workPackage.status),
                     createElement('strong', {
                         text: `Stato WP ${workPackage.completionPercent.toFixed(1)}%`,
                         title: `Snapshot ${releaseDate(workPackage.lastReviewedAt, locale)}`
-                    })
+                    }),
+                    comparison
+                        ? createElement('div', { className: 'critical-path__comparison' }, [comparison])
+                        : null
                 ]));
             });
             clear(elements.releaseCriticalBranches);
@@ -4981,11 +5009,21 @@
             });
 
             renderReleaseSectionComparison(elements.releaseWorkPackagesComparison, releasePlan, 'work-packages');
+            const workPackageComparison = buildWorkPackageComparisonPresentation(releasePlan);
+            elements.releaseWorkPackagesSummary.textContent = workPackageComparison?.summaryText
+                || 'Un peso funzionale comune; gli scope cambiano per membership';
             clear(elements.releaseWorkPackages);
             releasePlan.workPackages.forEach(workPackage => {
+                const comparisonChange = releaseComparisonChange(releasePlan, 'work-packages', workPackage.id);
                 const title = createElement('div', { className: 'release-wp__title' }, [
                     createElement('strong', { text: workPackage.title })
                 ]);
+                if (comparisonChange) {
+                    title.append(createElement('span', {
+                        className: 'release-tag release-tag--change',
+                        text: `Variato · ${comparisonChange.delta || 'stato aggiornato'}`
+                    }));
+                }
                 const isPrimaryChain = (releasePlan.criticalPath.primaryChainWorkPackageIds || [])
                     .includes(workPackage.id);
                 if (isPrimaryChain || (!releasePlan.releaseStatus && workPackage.criticalPath)) {
@@ -5076,7 +5114,9 @@
                     ])
                     : createElement('span', { className: 'muted', text: 'Stima delivery non disponibile nel formato precedente.' });
 
-                const row = createElement('tr');
+                const row = createElement('tr', {
+                    className: comparisonChange ? 'release-wp-row--changed' : ''
+                });
                 row.append(
                     createElement('td', { attributes: { 'data-label': 'Work package' } }, [
                         title,

@@ -27,6 +27,7 @@ import {
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation,
     buildReleaseComparisonPresentation,
+    buildWorkPackageComparisonPresentation,
     buildWeeklyActualWorkPresentation,
     formatElapsedSeconds,
     releaseComparisonChange,
@@ -80,6 +81,7 @@ const elements = Object.fromEntries([
     'releaseForecastComparison',
     'releaseWorkPackages',
     'releaseWorkPackagesComparison',
+    'releaseWorkPackagesSummary',
     'releaseActualWorkPanel',
     'releaseActualComparison',
     'releaseActualCoverage',
@@ -705,13 +707,19 @@ function renderReleaseDashboard() {
     releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
         const workPackage = workPackageById.get(workPackageId);
         if (!workPackage) return;
-        elements.releaseCriticalPath.append(createElement('li', {}, [
+        const comparison = itemComparisonNode(releasePlan, 'work-packages', workPackage.id);
+        elements.releaseCriticalPath.append(createElement('li', {
+            className: comparison ? 'critical-path__item critical-path__item--changed' : 'critical-path__item'
+        }, [
             createElement('span', { text: workPackage.title }),
             releaseStatusBadge(workPackage.status),
             createElement('strong', {
                 text: `Stato WP ${workPackage.completionPercent.toFixed(1)}%`,
                 title: `Snapshot ${releaseDate(workPackage.lastReviewedAt, locale)}`
-            })
+            }),
+            comparison
+                ? createElement('div', { className: 'critical-path__comparison' }, [comparison])
+                : null
         ]));
     });
     clear(elements.releaseCriticalBranches);
@@ -749,11 +757,21 @@ function renderReleaseDashboard() {
     });
 
     renderReleaseSectionComparison(elements.releaseWorkPackagesComparison, releasePlan, 'work-packages');
+    const workPackageComparison = buildWorkPackageComparisonPresentation(releasePlan);
+    elements.releaseWorkPackagesSummary.textContent = workPackageComparison?.summaryText
+        || 'Un peso funzionale comune; gli scope cambiano per membership';
     clear(elements.releaseWorkPackages);
     releasePlan.workPackages.forEach(workPackage => {
+        const comparisonChange = releaseComparisonChange(releasePlan, 'work-packages', workPackage.id);
         const title = createElement('div', { className: 'release-wp__title' }, [
             createElement('strong', { text: workPackage.title })
         ]);
+        if (comparisonChange) {
+            title.append(createElement('span', {
+                className: 'release-tag release-tag--change',
+                text: `Variato · ${comparisonChange.delta || 'stato aggiornato'}`
+            }));
+        }
         const isPrimaryChain = (releasePlan.criticalPath.primaryChainWorkPackageIds || [])
             .includes(workPackage.id);
         if (isPrimaryChain || (!releasePlan.releaseStatus && workPackage.criticalPath)) {
@@ -844,7 +862,9 @@ function renderReleaseDashboard() {
             ])
             : createElement('span', { className: 'muted', text: 'Stima delivery non disponibile nel formato precedente.' });
 
-        const row = createElement('tr');
+        const row = createElement('tr', {
+            className: comparisonChange ? 'release-wp-row--changed' : ''
+        });
         row.append(
             createElement('td', { attributes: { 'data-label': 'Work package' } }, [
                 title,

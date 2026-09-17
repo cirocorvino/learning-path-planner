@@ -7,6 +7,7 @@ import {
     buildAllocationReleasePresentation,
     buildModuleWorkPackagePresentation,
     buildReleaseComparisonPresentation,
+    buildWorkPackageComparisonPresentation,
     buildWeeklyActualWorkPresentation,
     releaseComparisonChange,
     releaseComparisonSection
@@ -141,6 +142,50 @@ test('presenta il confronto più recente per sezione e per elemento', () => {
     assert.equal(releaseComparisonSection(plan, 'gates').status, 'unchanged');
     assert.equal(releaseComparisonChange(plan, 'scope-metrics', 'pilot-v1').after, '28,6%');
     assert.equal(releaseComparisonChange(plan, 'scope-metrics', 'missing'), null);
+});
+
+test('riassume e rende individuabili le variazioni dei work package', () => {
+    const plan = {
+        latestComparison: {
+            sections: [{
+                id: 'work-packages',
+                label: 'Work package',
+                status: 'changed',
+                summary: 'Tre WP variati.',
+                changes: [
+                    {
+                        itemId: 'completed-one',
+                        kind: 'increase',
+                        before: 'Parziale · 20%',
+                        after: 'Completato · 100%',
+                        delta: '+80 punti'
+                    },
+                    {
+                        itemId: 'state-one',
+                        kind: 'changed',
+                        before: '30% · Dormant',
+                        after: '30% · ConfigGated',
+                        delta: 'Percentuale invariata'
+                    },
+                    {
+                        itemId: 'state-two',
+                        kind: 'changed',
+                        before: '20% · fixture disponibili',
+                        after: '20% · benchmark da eseguire',
+                        delta: 'Percentuale invariata'
+                    }
+                ]
+            }]
+        }
+    };
+
+    assert.deepEqual(buildWorkPackageComparisonPresentation(plan), {
+        changedCount: 3,
+        completedCount: 1,
+        unchangedPercentageCount: 2,
+        summaryText: '3 WP variati · 1 completato · 2 aggiornati con percentuale invariata'
+    });
+    assert.equal(releaseComparisonChange(plan, 'work-packages', 'state-one').after, '30% · ConfigGated');
 });
 
 test('presenta intervallo task, unione giornaliera, output GitHub ed effort agentico separati', () => {

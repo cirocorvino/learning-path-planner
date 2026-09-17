@@ -64,6 +64,27 @@ export function buildReleaseComparisonPresentation(releasePlan) {
     };
 }
 
+export function buildWorkPackageComparisonPresentation(releasePlan) {
+    const section = releaseComparisonSection(releasePlan, 'work-packages');
+    if (!section) return null;
+
+    const completedCount = section.changes.filter(change =>
+        /\bcompletat[oa]\b/i.test(change.after)
+    ).length;
+    const unchangedPercentageCount = section.changes.filter(change =>
+        /percentuale invariata/i.test(change.delta)
+    ).length;
+
+    return {
+        changedCount: section.changes.length,
+        completedCount,
+        unchangedPercentageCount,
+        summaryText: section.changes.length
+            ? `${section.changes.length} WP variati · ${completedCount} ${completedCount === 1 ? 'completato' : 'completati'} · ${unchangedPercentageCount} aggiornati con percentuale invariata`
+            : 'Nessuna variazione rispetto al piano precedente'
+    };
+}
+
 function formatClock(timestamp, locale, timeZone) {
     return new Intl.DateTimeFormat(locale, {
         hour: '2-digit',
