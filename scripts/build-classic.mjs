@@ -84,8 +84,11 @@ const modules = [
             'buildAllocationClassNames',
             'buildAllocationReleasePresentation',
             'buildModuleWorkPackagePresentation',
+            'buildReleaseComparisonPresentation',
             'buildWeeklyActualWorkPresentation',
-            'formatElapsedSeconds'
+            'formatElapsedSeconds',
+            'releaseComparisonChange',
+            'releaseComparisonSection'
         ]
     },
     {
@@ -139,7 +142,7 @@ const modules = [
         prelude: [
             'const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;',
             'const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getVisibleGanttModules, getWeekAgenda } = plannerApi;',
-            'const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds } = releasePresentationApi;',
+            'const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection } = releasePresentationApi;',
             'const { normalizeDatabasePath } = configurationApi;',
             'const { plannerStore } = storeApi;'
         ].join('\n'),

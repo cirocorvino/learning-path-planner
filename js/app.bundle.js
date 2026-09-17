@@ -7,11 +7,13 @@
         const PLAN_KIND = 'learning-plan';
         const SCHEMA_VERSION = 2;
         const RELEASE_DATABASE_SCHEMA_VERSION = 3;
-        const RELEASE_PLAN_SCHEMA_VERSION = 5;
+        const RELEASE_PLAN_SCHEMA_VERSION = 6;
 
-        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, 4, RELEASE_PLAN_SCHEMA_VERSION];
+        const SUPPORTED_RELEASE_PLAN_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, RELEASE_PLAN_SCHEMA_VERSION];
         const RELEASE_SCHEDULE_MODES = ['clock_slots', 'abstract_weekly_capacity'];
         const RELEASE_EFFORT_UNITS = ['clock_minutes', 'agentic_equivalent_minutes'];
+        const RELEASE_COMPARISON_STATUSES = ['changed', 'unchanged', 'not_comparable'];
+        const RELEASE_COMPARISON_KINDS = ['increase', 'decrease', 'changed', 'added', 'removed', 'unchanged'];
         const ACTUAL_WORK_TIMING_KINDS = ['clock_interval', 'unplaced_duration', 'open_interval'];
         const ACTUAL_WORK_REFERENCE_KINDS = ['task', 'issue', 'pr'];
         const SCHEDULE_RECONCILIATION_KINDS = ['planned', 'anticipated', 'added', 'added_and_anticipated'];
@@ -1450,6 +1452,65 @@
             };
         }
 
+        function normalizeSnapshotComparison(input, path) {
+            const source = requireObject(input, path);
+            const normalizeSnapshot = (snapshot, snapshotPath) => {
+                const value = requireObject(snapshot, snapshotPath);
+                return {
+                    label: requiredString(value.label, `${snapshotPath}.label`, 160),
+                    assessedAt: validDate(value.assessedAt, `${snapshotPath}.assessedAt`),
+                    reference: requiredString(value.reference, `${snapshotPath}.reference`, 500)
+                };
+            };
+            const sections = requireArray(source.sections, `${path}.sections`).map((section, sectionIndex) => {
+                const sectionPath = `${path}.sections[${sectionIndex}]`;
+                requireObject(section, sectionPath);
+                const status = requiredString(section.status, `${sectionPath}.status`, 40);
+                if (!RELEASE_COMPARISON_STATUSES.includes(status)) {
+                    throw new Error(`${sectionPath}.status non è supportato.`);
+                }
+                const changes = requireArray(section.changes, `${sectionPath}.changes`).map((change, changeIndex) => {
+                    const changePath = `${sectionPath}.changes[${changeIndex}]`;
+                    requireObject(change, changePath);
+                    const kind = requiredString(change.kind, `${changePath}.kind`, 40);
+                    if (!RELEASE_COMPARISON_KINDS.includes(kind)) {
+                        throw new Error(`${changePath}.kind non è supportato.`);
+                    }
+                    return {
+                        id: validId(change.id, `${changePath}.id`),
+                        itemId: optionalString(change.itemId, 160),
+                        label: requiredString(change.label, `${changePath}.label`, 240),
+                        kind,
+                        before: requiredString(change.before, `${changePath}.before`, 2000),
+                        after: requiredString(change.after, `${changePath}.after`, 2000),
+                        delta: optionalString(change.delta, 240),
+                        note: optionalString(change.note, 2000)
+                    };
+                });
+                uniqueIds(changes, `${sectionPath}.changes`);
+                if (status === 'changed' && changes.length === 0) {
+                    throw new Error(`${sectionPath} è changed ma non contiene variazioni.`);
+                }
+                return {
+                    id: validId(section.id, `${sectionPath}.id`),
+                    label: requiredString(section.label, `${sectionPath}.label`, 160),
+                    status,
+                    summary: requiredString(section.summary, `${sectionPath}.summary`, 2000),
+                    changes
+                };
+            });
+            uniqueIds(sections, `${path}.sections`);
+            return {
+                id: validId(source.id, `${path}.id`),
+                comparedAt: validDate(source.comparedAt, `${path}.comparedAt`),
+                fromSnapshot: normalizeSnapshot(source.fromSnapshot, `${path}.fromSnapshot`),
+                toSnapshot: normalizeSnapshot(source.toSnapshot, `${path}.toSnapshot`),
+                summary: requiredString(source.summary, `${path}.summary`, 2000),
+                invariants: normalizeStringList(source.invariants, `${path}.invariants`, 1000),
+                sections
+            };
+        }
+
         function normalizeReleasePlan(input, topicIds, moduleIds) {
             const source = requireObject(input, 'releasePlan');
             const releasePlanSchemaVersion = Number(source.schemaVersion);
@@ -1460,6 +1521,7 @@
             const hasMetricSemantics = releasePlanSchemaVersion >= 3;
             const hasAbsoluteFunctionalWeights = releasePlanSchemaVersion >= 4;
             const hasAttestedActualWork = releasePlanSchemaVersion >= 5;
+            const hasSnapshotComparison = releasePlanSchemaVersion >= 6;
 
             const sourceSnapshotInput = requireObject(source.sourceSnapshot, 'releasePlan.sourceSnapshot');
             const sourceSnapshot = {
@@ -1485,6 +1547,9 @@
                 ),
                 notes: optionalString(sourceSnapshotInput.notes, 2000)
             };
+            const latestComparison = hasSnapshotComparison
+                ? normalizeSnapshotComparison(source.latestComparison, 'releasePlan.latestComparison')
+                : null;
 
             const capacityInput = requireObject(source.capacity, 'releasePlan.capacity');
             const capacity = {
@@ -2049,6 +2114,7 @@
             return {
                 schemaVersion: releasePlanSchemaVersion,
                 sourceSnapshot,
+                ...(hasSnapshotComparison ? { latestComparison } : {}),
                 methodology,
                 capacity,
                 scopes,
@@ -2872,6 +2938,39 @@
             ].filter(Boolean).join(' ');
         }
 
+        const ROLE_LABEL_RULES = [
+            [/^Coder(?:\s|$)/i, 'Coder'],
+            [/^Architect Review(?:\s|$)/i, 'Architect Review'],
+            [/^QA(?:\s|$)/i, 'QA Acceptance'],
+            [/^SDET(?:\s|$)/i, 'SDET / Test Engineer'],
+            [/^Esperto strategia LLM e costi$/i, 'Esperto strategia LLM e costi']
+        ];
+
+        function roleLabel(roleTask) {
+            return ROLE_LABEL_RULES.find(([pattern]) => pattern.test(roleTask))?.[1] || roleTask;
+        }
+
+        function releaseComparisonSection(releasePlan, sectionId) {
+            return releasePlan?.latestComparison?.sections.find(section => section.id === sectionId) || null;
+        }
+
+        function releaseComparisonChange(releasePlan, sectionId, itemId) {
+            return releaseComparisonSection(releasePlan, sectionId)?.changes
+                .find(change => change.itemId === itemId) || null;
+        }
+
+        function buildReleaseComparisonPresentation(releasePlan) {
+            const comparison = releasePlan?.latestComparison;
+            if (!comparison) return null;
+            const changedSections = comparison.sections.filter(section => section.status === 'changed');
+            return {
+                ...comparison,
+                changedSectionCount: changedSections.length,
+                unchangedSectionCount: comparison.sections.filter(section => section.status === 'unchanged').length,
+                changedSections
+            };
+        }
+
         function formatClock(timestamp, locale, timeZone) {
             return new Intl.DateTimeFormat(locale, {
                 hour: '2-digit',
@@ -2942,6 +3041,25 @@
             return `${startText}–${endText}`;
         }
 
+        function dayClockBounds(entry, dayDate, locale) {
+            const timing = entry.timing;
+            if (timing.kind === 'unplaced_duration') return { startText: '', endText: '' };
+            if (timing.kind === 'open_interval') {
+                return {
+                    startText: formatClockMinute(timing.startAt, locale, timing.timeZone),
+                    endText: ''
+                };
+            }
+            return {
+                startText: dayDate === timing.startAt.slice(0, 10)
+                    ? formatClockMinute(timing.startAt, locale, timing.timeZone)
+                    : '00:00',
+                endText: dayDate === timing.endAt.slice(0, 10)
+                    ? formatClockMinute(timing.endAt, locale, timing.timeZone)
+                    : '24:00'
+            };
+        }
+
         function actualEntryViewModel(
             entry,
             sourceById,
@@ -2953,6 +3071,7 @@
             dayElapsedSeconds
         ) {
             const timing = entry.timing;
+            const clockBounds = dayClockBounds(entry, dayDate, locale);
             let timingText;
             let elapsedSeconds = 0;
             if (timing.kind === 'clock_interval') {
@@ -2978,6 +3097,8 @@
                 dayElapsedText: formatElapsedSeconds(dayElapsedSeconds),
                 dayTimingText: dayTimingText(entry, dayDate, dayElapsedSeconds, locale),
                 dayClockText: dayClockText(entry, dayDate, locale),
+                dayClockStartText: clockBounds.startText,
+                dayClockEndText: clockBounds.endText,
                 references: entry.references.map(reference => ({ ...reference })),
                 referencesText: entry.references.map(reference => `${reference.kind.toUpperCase()} ${reference.reference}`).join(' · '),
                 workPackagesText: entry.workPackageIds
@@ -3004,6 +3125,80 @@
                     };
                 })
             };
+        }
+
+        function groupActualEntriesByRole(entries) {
+            const groups = new Map();
+            entries.forEach(entry => {
+                const label = roleLabel(entry.roleTask);
+                if (!groups.has(label)) {
+                    groups.set(label, {
+                        roleLabel: label,
+                        entries: [],
+                        activityMap: new Map(),
+                        sources: new Set(),
+                        statuses: new Set(),
+                        elapsedSeconds: 0,
+                        unplacedSeconds: 0
+                    });
+                }
+                const group = groups.get(label);
+                group.entries.push(entry);
+                group.statuses.add(entry.status);
+                group.elapsedSeconds += entry.dayElapsedSeconds;
+                if (entry.timingKind === 'unplaced_duration') group.unplacedSeconds += entry.dayElapsedSeconds;
+                if (entry.source) group.sources.add(`${entry.source.reference} · ${entry.source.summary}`);
+
+                const activityKey = [
+                    entry.topicLabel,
+                    entry.description,
+                    entry.referencesText,
+                    entry.workPackagesText
+                ].join('|');
+                if (!group.activityMap.has(activityKey)) {
+                    group.activityMap.set(activityKey, {
+                        topicLabel: entry.topicLabel,
+                        description: entry.description,
+                        referencesText: entry.referencesText,
+                        workPackagesText: entry.workPackagesText,
+                        outputEvidence: new Set(),
+                        entryCount: 0,
+                        elapsedSeconds: 0
+                    });
+                }
+                const activity = group.activityMap.get(activityKey);
+                activity.entryCount += 1;
+                activity.elapsedSeconds += entry.dayElapsedSeconds;
+                entry.outputEvidence.forEach(evidence => activity.outputEvidence.add(evidence.text));
+            });
+
+            return [...groups.values()].map(group => {
+                const placed = group.entries
+                    .filter(entry => entry.dayClockStartText)
+                    .sort((left, right) => left.timingSortKey.localeCompare(right.timingSortKey));
+                const firstStartText = placed[0]?.dayClockStartText || '';
+                const lastEndText = [...placed].reverse().find(entry => entry.dayClockEndText)?.dayClockEndText || '';
+                const hasOpenInterval = placed.some(entry => entry.timingKind === 'open_interval');
+                return {
+                    roleLabel: group.roleLabel,
+                    entryCount: group.entries.length,
+                    statuses: [...group.statuses],
+                    elapsedSeconds: group.elapsedSeconds,
+                    elapsedText: formatElapsedSeconds(group.elapsedSeconds),
+                    unplacedText: formatElapsedSeconds(group.unplacedSeconds),
+                    firstStartText,
+                    lastEndText,
+                    rangeText: firstStartText
+                        ? `${firstStartText}–${lastEndText || (hasOpenInterval ? 'in corso' : '—')}`
+                        : 'Nessuna fascia collocata',
+                    sources: [...group.sources],
+                    activities: [...group.activityMap.values()].map(activity => ({
+                        ...activity,
+                        outputEvidence: [...activity.outputEvidence],
+                        elapsedText: formatElapsedSeconds(activity.elapsedSeconds)
+                    }))
+                };
+            }).sort((left, right) => left.roleLabel.localeCompare(right.roleLabel, 'it'));
         }
 
         function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', outputTimeZone = 'Europe/Rome') {
@@ -3043,17 +3238,8 @@
                     closedEntryCount: metrics.closedEntryCount,
                     openEntryCount: metrics.openEntryCount
                 },
-                days: metrics.daily.map(day => ({
-                    date: day.date,
-                    dateText: formatDate(day.date, locale, { year: true }),
-                    taskElapsedSeconds: day.taskElapsedSeconds,
-                    dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
-                    unplacedElapsedSeconds: day.unplacedElapsedSeconds,
-                    taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
-                    dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
-                    unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
-                    openEntryCount: day.openEntryCount,
-                    entries: day.entries.map(entry => actualEntryViewModel(
+                days: metrics.daily.map(day => {
+                    const entries = day.entries.map(entry => actualEntryViewModel(
                         entry,
                         sourceById,
                         outputEvidenceById,
@@ -3062,8 +3248,21 @@
                         outputTimeZone,
                         day.date,
                         day.entryElapsedSeconds[entry.id] || 0
-                    ))
-                })),
+                    ));
+                    return {
+                        date: day.date,
+                        dateText: formatDate(day.date, locale, { year: true }),
+                        taskElapsedSeconds: day.taskElapsedSeconds,
+                        dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
+                        unplacedElapsedSeconds: day.unplacedElapsedSeconds,
+                        taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
+                        dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
+                        unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
+                        openEntryCount: day.openEntryCount,
+                        entries,
+                        roleGroups: groupActualEntriesByRole(entries)
+                    };
+                }),
                 referenceTotals: totals(metrics.referenceTotals),
                 workPackageTotals: totals(metrics.workPackageTotals).map(item => ({
                     ...item,
@@ -3322,7 +3521,7 @@
             };
         }
 
-        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds };
+        return { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection };
     })();
 
     const configurationApi = (() => {
@@ -4063,7 +4262,7 @@
     (() => {
         const { CATEGORY_ROLES, DAY_KEYS, MODULE_MODES, TOPIC_KINDS, calculateReleaseScopeMetrics, createId, databaseHasContent, releaseScopeInversionContributors, summarizeScopeGateReadiness } = modelApi;
         const { buildPlanSchedule, daysBetween, formatDate, formatDayName, formatDuration, getModuleWeekAllocations, getTimelineMonths, getVisibleGanttModules, getWeekAgenda } = plannerApi;
-        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds } = releasePresentationApi;
+        const { buildActualWorkLogPresentation, buildAllocationClassNames, buildAllocationReleasePresentation, buildModuleWorkPackagePresentation, buildReleaseComparisonPresentation, buildWeeklyActualWorkPresentation, formatElapsedSeconds, releaseComparisonChange, releaseComparisonSection } = releasePresentationApi;
         const { normalizeDatabasePath } = configurationApi;
         const { plannerStore } = storeApi;
 
@@ -4089,20 +4288,32 @@
             'releaseDashboard',
             'releaseSourceSummary',
             'releaseCapacitySummary',
+            'releaseContextComparison',
             'releaseScopeCards',
             'releaseMetricSemantics',
+            'releaseChangesPanel',
+            'releaseChangesCount',
+            'releaseChangesPeriod',
+            'releaseChangesSummary',
+            'releaseChangesSections',
+            'releaseChangesInvariants',
             'releaseStatusPanel',
+            'releaseStatusComparison',
             'releaseDeliveryTotals',
             'releaseStatusHeadline',
             'releaseFunctionalNote',
             'releaseStatusDetails',
             'releaseNextStep',
+            'releaseCriticalComparison',
             'releaseCriticalSummary',
             'releaseCriticalPath',
             'releaseCriticalBranches',
             'releaseForecasts',
+            'releaseForecastComparison',
             'releaseWorkPackages',
+            'releaseWorkPackagesComparison',
             'releaseActualWorkPanel',
+            'releaseActualComparison',
             'releaseActualCoverage',
             'releaseActualSemantics',
             'releaseActualSummary',
@@ -4110,9 +4321,13 @@
             'releaseActualTotals',
             'releaseActualTotalsContent',
             'releaseGates',
+            'releaseGatesComparison',
             'releaseMilestones',
+            'releaseMilestonesComparison',
             'releaseHistory',
+            'releaseHistoryComparison',
             'planPeriod',
+            'ganttComparison',
             'ganttTable',
             'ganttRows',
             'ganttEmpty',
@@ -4328,6 +4543,108 @@
             return createElement('section', {}, [createElement('h4', { text: title }), list]);
         }
 
+        const RELEASE_COMPARISON_STATUS_LABELS = {
+            changed: 'Variato',
+            unchanged: 'Invariato',
+            not_comparable: 'Non confrontabile'
+        };
+
+        const RELEASE_COMPARISON_KIND_LABELS = {
+            increase: 'Aumento',
+            decrease: 'Riduzione',
+            changed: 'Modifica',
+            added: 'Aggiunta',
+            removed: 'Rimozione',
+            unchanged: 'Invariato'
+        };
+
+        function releaseComparisonChangeNode(change, compact = false) {
+            return createElement('article', {
+                className: `release-change release-change--${change.kind}${compact ? ' release-change--compact' : ''}`
+            }, [
+                createElement('div', { className: 'release-change__heading' }, [
+                    createElement('strong', { text: change.label }),
+                    createElement('span', {
+                        className: 'release-change__kind',
+                        text: change.delta || RELEASE_COMPARISON_KIND_LABELS[change.kind] || change.kind
+                    })
+                ]),
+                createElement('div', { className: 'release-change__values' }, [
+                    createElement('span', { className: 'release-change__before' }, [
+                        createElement('small', { text: 'Prima' }),
+                        createElement('strong', { text: change.before })
+                    ]),
+                    createElement('span', { className: 'release-change__arrow', text: '→', attributes: { 'aria-hidden': 'true' } }),
+                    createElement('span', { className: 'release-change__after' }, [
+                        createElement('small', { text: 'Ora' }),
+                        createElement('strong', { text: change.after })
+                    ])
+                ]),
+                change.note ? createElement('p', { className: 'muted', text: change.note }) : null
+            ]);
+        }
+
+        function renderReleaseSectionComparison(target, releasePlan, sectionId, { showChanges = false } = {}) {
+            if (!target) return;
+            const section = releaseComparisonSection(releasePlan, sectionId);
+            clear(target);
+            setHidden(target, !section);
+            if (!section) return;
+            target.append(createElement('div', { className: 'release-section-comparison__summary' }, [
+                createElement('span', {
+                    className: `release-section-comparison__status release-section-comparison__status--${section.status}`,
+                    text: RELEASE_COMPARISON_STATUS_LABELS[section.status] || section.status
+                }),
+                createElement('p', { text: section.summary })
+            ]));
+            if (showChanges && section.changes.length) {
+                const list = createElement('div', { className: 'release-section-comparison__changes' });
+                section.changes.forEach(change => list.append(releaseComparisonChangeNode(change)));
+                target.append(list);
+            }
+        }
+
+        function itemComparisonNode(releasePlan, sectionId, itemId) {
+            const change = releaseComparisonChange(releasePlan, sectionId, itemId);
+            return change ? releaseComparisonChangeNode(change, true) : null;
+        }
+
+        function renderReleaseChanges(releasePlan, locale) {
+            const comparison = buildReleaseComparisonPresentation(releasePlan);
+            setHidden(elements.releaseChangesPanel, !comparison);
+            if (!comparison) return;
+            elements.releaseChangesCount.textContent = `${comparison.changedSectionCount} sezioni variate · ${comparison.unchangedSectionCount} invariate`;
+            elements.releaseChangesPeriod.textContent = [
+                `${comparison.fromSnapshot.label}: ${releaseDate(comparison.fromSnapshot.assessedAt, locale)}`,
+                `${comparison.toSnapshot.label}: ${releaseDate(comparison.toSnapshot.assessedAt, locale)}`
+            ].join(' → ');
+            elements.releaseChangesPeriod.title = `${comparison.fromSnapshot.reference} → ${comparison.toSnapshot.reference}`;
+            elements.releaseChangesSummary.textContent = comparison.summary;
+
+            clear(elements.releaseChangesSections);
+            comparison.changedSections.forEach(section => {
+                elements.releaseChangesSections.append(createElement('details', {
+                    className: 'release-changes__section'
+                }, [
+                    createElement('summary', {}, [
+                        createElement('strong', { text: section.label }),
+                        createElement('span', { text: `${section.changes.length} ${section.changes.length === 1 ? 'variazione' : 'variazioni'}` })
+                    ]),
+                    createElement('p', { text: section.summary }),
+                    createElement('div', { className: 'release-section-comparison__changes' },
+                        section.changes.map(change => releaseComparisonChangeNode(change)))
+                ]));
+            });
+
+            clear(elements.releaseChangesInvariants);
+            if (comparison.invariants.length) {
+                elements.releaseChangesInvariants.append(
+                    createElement('strong', { text: 'Che cosa non è cambiato' }),
+                    createElement('ul', {}, comparison.invariants.map(item => createElement('li', { text: item })))
+                );
+            }
+        }
+
         function actualSummaryMetric(label, value, detail = '') {
             return createElement('article', {}, [
                 createElement('span', { text: label }),
@@ -4387,36 +4704,50 @@
             }
             presentation.days.forEach(day => {
                 const entries = createElement('div', { className: 'release-actual-day__entries' });
-                day.entries.forEach(entry => {
-                    const outputEvidence = createElement('div', { className: 'release-actual-entry__evidence' }, [
-                        createElement('strong', { text: 'Evidenza output' })
+                day.roleGroups.forEach(group => {
+                    const sources = createElement('div', { className: 'release-actual-role__sources' }, [
+                        createElement('strong', { text: 'Fonte intervalli' })
                     ]);
-                    if (entry.outputEvidence.length) {
-                        const list = createElement('ul');
-                        entry.outputEvidence.forEach(evidence => list.append(createElement('li', { text: evidence.text })));
-                        outputEvidence.append(list);
+                    if (group.sources.length === 1) {
+                        sources.append(createElement('span', { text: group.sources[0] }));
                     } else {
-                        outputEvidence.append(createElement('span', { text: 'Nessun evento GitHub associato; vale la fonte task.' }));
+                        sources.append(createElement('ul', {}, group.sources.map(source => createElement('li', { text: source }))));
                     }
+
+                    const activities = createElement('div', { className: 'release-actual-role__activities' });
+                    group.activities.forEach(activity => {
+                        const evidenceText = activity.outputEvidence.length
+                            ? activity.outputEvidence.join(' · ')
+                            : 'Nessun evento GitHub associato; vale la fonte task.';
+                        activities.append(createElement('article', { className: 'release-actual-role__activity' }, [
+                            createElement('div', { className: 'release-actual-role__activity-heading' }, [
+                                createElement('strong', { text: activity.topicLabel }),
+                                createElement('span', { text: activity.elapsedText })
+                            ]),
+                            createElement('p', { text: activity.description }),
+                            createElement('small', {
+                                text: [activity.referencesText, activity.workPackagesText].filter(Boolean).join(' · ')
+                            }),
+                            activity.entryCount > 1
+                                ? createElement('small', { text: `${activity.entryCount} intervalli con lo stesso contenuto` })
+                                : null,
+                            createElement('small', { text: evidenceText })
+                        ]));
+                    });
+
                     entries.append(createElement('article', { className: 'release-actual-entry' }, [
                         createElement('div', { className: 'release-actual-entry__heading' }, [
-                            createElement('strong', { text: entry.roleTask }),
-                            releaseStatusBadge(entry.status)
+                            createElement('strong', { text: group.roleLabel }),
+                            ...group.statuses.map(status => releaseStatusBadge(status))
                         ]),
-                        createElement('span', { className: 'release-actual-entry__time', text: entry.timingText }),
-                        createElement('p', {}, [
-                            createElement('strong', { text: entry.topicLabel }),
-                            document.createTextNode(` · ${entry.description}`)
+                        createElement('div', { className: 'release-actual-role__timing' }, [
+                            createElement('strong', { text: `${group.rangeText} · ${group.elapsedText} totali` }),
+                            createElement('small', {
+                                text: `${group.entryCount} ${group.entryCount === 1 ? 'intervallo' : 'intervalli'}${group.unplacedText === '0 s' ? '' : ` · ${group.unplacedText} non collocati`}`
+                            }),
+                            sources
                         ]),
-                        createElement('small', {
-                            text: [entry.referencesText, entry.workPackagesText].filter(Boolean).join(' · ')
-                        }),
-                        createElement('div', { className: 'release-actual-entry__source' }, [
-                            createElement('strong', { text: 'Fonte intervallo' }),
-                            createElement('span', { text: `${entry.source.reference} · ${entry.source.summary}` })
-                        ]),
-                        outputEvidence,
-                        createElement('small', { text: entry.agentEffortText })
+                        activities
                     ]));
                 });
                 const openText = day.openEntryCount
@@ -4479,6 +4810,10 @@
                 `calibrazione ${releasePlan.capacity.calibrationWindowWeeks} settimane`
             ].join(' · ');
             elements.releaseCapacitySummary.title = releasePlan.capacity.basis;
+            renderReleaseSectionComparison(elements.releaseContextComparison, releasePlan, 'release-context', {
+                showChanges: true
+            });
+            renderReleaseChanges(releasePlan, locale);
 
             clear(elements.releaseScopeCards);
             releasePlan.scopes.forEach((scope, scopeIndex) => {
@@ -4533,6 +4868,7 @@
                     createElement('small', {
                         text: `${scope.status} · snapshot ${releaseDate(scope.lastReviewedAt, locale)}`
                     }),
+                    itemComparisonNode(releasePlan, 'scope-metrics', scope.id),
                     createElement('div', { className: 'release-scope__readiness' }, [
                         createElement('span', { text: releasePlan.metricSemantics?.releaseReadiness.label || 'Readiness di rilascio' }),
                         releaseReadinessBadge(readiness.status),
@@ -4561,13 +4897,21 @@
                     createElement('p', {
                         className: 'muted',
                         text: `${metricSemantics.releaseReadiness.rule} ${metricSemantics.releaseReadiness.blockingRule}`
-                    })
+                    }),
+                    (() => {
+                        const comparison = createElement('div', { className: 'release-section-comparison' });
+                        renderReleaseSectionComparison(comparison, releasePlan, 'metric-semantics');
+                        return comparison;
+                    })()
                 );
             }
 
             const releaseStatus = releasePlan.releaseStatus;
             setHidden(elements.releaseStatusPanel, !releaseStatus);
             if (releaseStatus) {
+                renderReleaseSectionComparison(elements.releaseStatusComparison, releasePlan, 'release-status', {
+                    showChanges: true
+                });
                 const totals = releasePlan.deliveryTotals?.revisedBaseline;
                 elements.releaseStatusHeadline.textContent = releaseStatus.headline;
                 elements.releaseFunctionalNote.textContent = releaseStatus.functionalCompletionNote;
@@ -4585,6 +4929,9 @@
             }
 
             const workPackageById = releaseWorkPackageMap();
+            renderReleaseSectionComparison(elements.releaseCriticalComparison, releasePlan, 'critical-path', {
+                showChanges: true
+            });
             clear(elements.releaseCriticalPath);
             elements.releaseCriticalSummary.textContent = releasePlan.criticalPath.summary;
             releasePlan.criticalPath.workPackageIds.forEach(workPackageId => {
@@ -4611,6 +4958,7 @@
                 ]));
             });
 
+            renderReleaseSectionComparison(elements.releaseForecastComparison, releasePlan, 'forecasts');
             clear(elements.releaseForecasts);
             releasePlan.forecasts.forEach(forecast => {
                 elements.releaseForecasts.append(createElement('article', { className: 'forecast' }, [
@@ -4627,10 +4975,12 @@
                             text: `${releaseDate(forecast.prudentStart, locale)} – ${releaseDate(forecast.prudentEnd, locale)}`
                         })
                     ]),
-                    createElement('small', { text: forecast.commitmentStatus })
+                    createElement('small', { text: forecast.commitmentStatus }),
+                    itemComparisonNode(releasePlan, 'forecasts', forecast.id)
                 ]));
             });
 
+            renderReleaseSectionComparison(elements.releaseWorkPackagesComparison, releasePlan, 'work-packages');
             clear(elements.releaseWorkPackages);
             releasePlan.workPackages.forEach(workPackage => {
                 const title = createElement('div', { className: 'release-wp__title' }, [
@@ -4736,7 +5086,8 @@
                                 createElement('strong', { text: 'Risultato concreto' }),
                                 createElement('span', { text: workPackage.productOutcome })
                             ])
-                            : null
+                            : null,
+                        itemComparisonNode(releasePlan, 'work-packages', workPackage.id)
                     ]),
                     createElement('td', { attributes: { 'data-label': 'Stato funzionale' } }, [progressCell]),
                     createElement('td', { attributes: { 'data-label': 'Stato reale e residuo' } }, [stateDetail]),
@@ -4746,8 +5097,12 @@
                 elements.releaseWorkPackages.append(row);
             });
 
+            renderReleaseSectionComparison(elements.releaseActualComparison, releasePlan, 'actual-work', {
+                showChanges: true
+            });
             renderActualWorkLog(releasePlan, locale);
 
+            renderReleaseSectionComparison(elements.releaseGatesComparison, releasePlan, 'gates');
             clear(elements.releaseGates);
             releasePlan.gates.forEach(gate => {
                 const criteria = createElement('ul');
@@ -4766,6 +5121,7 @@
             });
 
             const forecastById = new Map(releasePlan.forecasts.map(forecast => [forecast.id, forecast]));
+            renderReleaseSectionComparison(elements.releaseMilestonesComparison, releasePlan, 'milestones');
             clear(elements.releaseMilestones);
             releasePlan.milestones.forEach(milestone => {
                 const forecast = forecastById.get(milestone.forecastId);
@@ -4783,6 +5139,9 @@
                 ]));
             });
 
+            renderReleaseSectionComparison(elements.releaseHistoryComparison, releasePlan, 'history', {
+                showChanges: true
+            });
             clear(elements.releaseHistory);
             const historyEntries = [
                 ...releasePlan.changeHistory.map(change => ({
@@ -4882,6 +5241,7 @@
 
         function renderGantt() {
             clear(elements.ganttRows);
+            renderReleaseSectionComparison(elements.ganttComparison, currentDatabase.releasePlan, 'gantt');
             const modules = getVisibleGanttModules(currentSchedule);
             const empty = modules.length === 0 && currentSchedule.actualActivities.length === 0;
             setHidden(elements.ganttEmpty, !empty);
@@ -4983,7 +5343,8 @@
                                 ? `${module.remainingTopicCount} argomenti residui · ${module.completedTopicCount} completati${isCritical ? ' · percorso critico' : ''}`
                                 : `${module.topics.length} argomenti${isCritical ? ' · percorso critico' : ''}`
                     }),
-                    moduleSnapshotDetails
+                    moduleSnapshotDetails,
+                    itemComparisonNode(currentDatabase.releasePlan, 'gantt', module.id)
                 ]);
 
                 const effort = createElement('div', { attributes: { role: 'cell' } }, [

@@ -31,6 +31,39 @@ export function formatElapsedSeconds(value) {
     ].filter(Boolean).join(' ');
 }
 
+const ROLE_LABEL_RULES = [
+    [/^Coder(?:\s|$)/i, 'Coder'],
+    [/^Architect Review(?:\s|$)/i, 'Architect Review'],
+    [/^QA(?:\s|$)/i, 'QA Acceptance'],
+    [/^SDET(?:\s|$)/i, 'SDET / Test Engineer'],
+    [/^Esperto strategia LLM e costi$/i, 'Esperto strategia LLM e costi']
+];
+
+function roleLabel(roleTask) {
+    return ROLE_LABEL_RULES.find(([pattern]) => pattern.test(roleTask))?.[1] || roleTask;
+}
+
+export function releaseComparisonSection(releasePlan, sectionId) {
+    return releasePlan?.latestComparison?.sections.find(section => section.id === sectionId) || null;
+}
+
+export function releaseComparisonChange(releasePlan, sectionId, itemId) {
+    return releaseComparisonSection(releasePlan, sectionId)?.changes
+        .find(change => change.itemId === itemId) || null;
+}
+
+export function buildReleaseComparisonPresentation(releasePlan) {
+    const comparison = releasePlan?.latestComparison;
+    if (!comparison) return null;
+    const changedSections = comparison.sections.filter(section => section.status === 'changed');
+    return {
+        ...comparison,
+        changedSectionCount: changedSections.length,
+        unchangedSectionCount: comparison.sections.filter(section => section.status === 'unchanged').length,
+        changedSections
+    };
+}
+
 function formatClock(timestamp, locale, timeZone) {
     return new Intl.DateTimeFormat(locale, {
         hour: '2-digit',
@@ -101,6 +134,25 @@ function dayClockText(entry, dayDate, locale) {
     return `${startText}–${endText}`;
 }
 
+function dayClockBounds(entry, dayDate, locale) {
+    const timing = entry.timing;
+    if (timing.kind === 'unplaced_duration') return { startText: '', endText: '' };
+    if (timing.kind === 'open_interval') {
+        return {
+            startText: formatClockMinute(timing.startAt, locale, timing.timeZone),
+            endText: ''
+        };
+    }
+    return {
+        startText: dayDate === timing.startAt.slice(0, 10)
+            ? formatClockMinute(timing.startAt, locale, timing.timeZone)
+            : '00:00',
+        endText: dayDate === timing.endAt.slice(0, 10)
+            ? formatClockMinute(timing.endAt, locale, timing.timeZone)
+            : '24:00'
+    };
+}
+
 function actualEntryViewModel(
     entry,
     sourceById,
@@ -112,6 +164,7 @@ function actualEntryViewModel(
     dayElapsedSeconds
 ) {
     const timing = entry.timing;
+    const clockBounds = dayClockBounds(entry, dayDate, locale);
     let timingText;
     let elapsedSeconds = 0;
     if (timing.kind === 'clock_interval') {
@@ -137,6 +190,8 @@ function actualEntryViewModel(
         dayElapsedText: formatElapsedSeconds(dayElapsedSeconds),
         dayTimingText: dayTimingText(entry, dayDate, dayElapsedSeconds, locale),
         dayClockText: dayClockText(entry, dayDate, locale),
+        dayClockStartText: clockBounds.startText,
+        dayClockEndText: clockBounds.endText,
         references: entry.references.map(reference => ({ ...reference })),
         referencesText: entry.references.map(reference => `${reference.kind.toUpperCase()} ${reference.reference}`).join(' · '),
         workPackagesText: entry.workPackageIds
@@ -163,6 +218,80 @@ function actualEntryViewModel(
             };
         })
     };
+}
+
+function groupActualEntriesByRole(entries) {
+    const groups = new Map();
+    entries.forEach(entry => {
+        const label = roleLabel(entry.roleTask);
+        if (!groups.has(label)) {
+            groups.set(label, {
+                roleLabel: label,
+                entries: [],
+                activityMap: new Map(),
+                sources: new Set(),
+                statuses: new Set(),
+                elapsedSeconds: 0,
+                unplacedSeconds: 0
+            });
+        }
+        const group = groups.get(label);
+        group.entries.push(entry);
+        group.statuses.add(entry.status);
+        group.elapsedSeconds += entry.dayElapsedSeconds;
+        if (entry.timingKind === 'unplaced_duration') group.unplacedSeconds += entry.dayElapsedSeconds;
+        if (entry.source) group.sources.add(`${entry.source.reference} · ${entry.source.summary}`);
+
+        const activityKey = [
+            entry.topicLabel,
+            entry.description,
+            entry.referencesText,
+            entry.workPackagesText
+        ].join('|');
+        if (!group.activityMap.has(activityKey)) {
+            group.activityMap.set(activityKey, {
+                topicLabel: entry.topicLabel,
+                description: entry.description,
+                referencesText: entry.referencesText,
+                workPackagesText: entry.workPackagesText,
+                outputEvidence: new Set(),
+                entryCount: 0,
+                elapsedSeconds: 0
+            });
+        }
+        const activity = group.activityMap.get(activityKey);
+        activity.entryCount += 1;
+        activity.elapsedSeconds += entry.dayElapsedSeconds;
+        entry.outputEvidence.forEach(evidence => activity.outputEvidence.add(evidence.text));
+    });
+
+    return [...groups.values()].map(group => {
+        const placed = group.entries
+            .filter(entry => entry.dayClockStartText)
+            .sort((left, right) => left.timingSortKey.localeCompare(right.timingSortKey));
+        const firstStartText = placed[0]?.dayClockStartText || '';
+        const lastEndText = [...placed].reverse().find(entry => entry.dayClockEndText)?.dayClockEndText || '';
+        const hasOpenInterval = placed.some(entry => entry.timingKind === 'open_interval');
+        return {
+            roleLabel: group.roleLabel,
+            entryCount: group.entries.length,
+            statuses: [...group.statuses],
+            elapsedSeconds: group.elapsedSeconds,
+            elapsedText: formatElapsedSeconds(group.elapsedSeconds),
+            unplacedText: formatElapsedSeconds(group.unplacedSeconds),
+            firstStartText,
+            lastEndText,
+            rangeText: firstStartText
+                ? `${firstStartText}–${lastEndText || (hasOpenInterval ? 'in corso' : '—')}`
+                : 'Nessuna fascia collocata',
+            sources: [...group.sources],
+            activities: [...group.activityMap.values()].map(activity => ({
+                ...activity,
+                outputEvidence: [...activity.outputEvidence],
+                elapsedText: formatElapsedSeconds(activity.elapsedSeconds)
+            }))
+        };
+    }).sort((left, right) => left.roleLabel.localeCompare(right.roleLabel, 'it'));
 }
 
 export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', outputTimeZone = 'Europe/Rome') {
@@ -202,17 +331,8 @@ export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', ou
             closedEntryCount: metrics.closedEntryCount,
             openEntryCount: metrics.openEntryCount
         },
-        days: metrics.daily.map(day => ({
-            date: day.date,
-            dateText: formatDate(day.date, locale, { year: true }),
-            taskElapsedSeconds: day.taskElapsedSeconds,
-            dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
-            unplacedElapsedSeconds: day.unplacedElapsedSeconds,
-            taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
-            dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
-            unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
-            openEntryCount: day.openEntryCount,
-            entries: day.entries.map(entry => actualEntryViewModel(
+        days: metrics.daily.map(day => {
+            const entries = day.entries.map(entry => actualEntryViewModel(
                 entry,
                 sourceById,
                 outputEvidenceById,
@@ -221,8 +341,21 @@ export function buildActualWorkLogPresentation(releasePlan, locale = 'it-IT', ou
                 outputTimeZone,
                 day.date,
                 day.entryElapsedSeconds[entry.id] || 0
-            ))
-        })),
+            ));
+            return {
+                date: day.date,
+                dateText: formatDate(day.date, locale, { year: true }),
+                taskElapsedSeconds: day.taskElapsedSeconds,
+                dailyUnionElapsedSeconds: day.dailyUnionElapsedSeconds,
+                unplacedElapsedSeconds: day.unplacedElapsedSeconds,
+                taskElapsedText: formatElapsedSeconds(day.taskElapsedSeconds),
+                dailyUnionText: formatElapsedSeconds(day.dailyUnionElapsedSeconds),
+                unplacedText: formatElapsedSeconds(day.unplacedElapsedSeconds),
+                openEntryCount: day.openEntryCount,
+                entries,
+                roleGroups: groupActualEntriesByRole(entries)
+            };
+        }),
         referenceTotals: totals(metrics.referenceTotals),
         workPackageTotals: totals(metrics.workPackageTotals).map(item => ({
             ...item,
